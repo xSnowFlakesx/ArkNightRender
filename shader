@@ -6,15 +6,29 @@ Shader "Unlit/pbr"
         _Color("Color", Color) = (1,1,1,1)
         _NormalTex("Normal Tex", 2D) = "bump" {}
         _BumpScale("Bump Scale", Range(-5,5)) = 1
+        _ILMTex("ILM Tex", 2D) = "white" {}
+        _RampTex ("Ramp Texture", 2D) = "white" {}
+        _RampTex2 ("Ramp Texture2", 2D) = "white" {}
+        _ShadowThreshold ("Shadow Threshold", Range(0,1)) = 0.5
+        _ShadowSmoothness ("Shadow Smoothness", Range(0,1)) = 0.1
+        _RampThreshold ("Ramp Threshold", Range(0,1)) = 0.5
         _MaterialIDUSE("Material ID USE", Range(0,4)) = 0
-        _OcclusionTex("Occlusion Map", 2D) = "white" {}
-        _Roughness("Roughness", Range(0,1)) = 0
-        _Metallic("Metallic", Range(0,1)) = 0
-        _Smoothness("Smoothness", Range(0,1)) = 0.5
+        _OcclusionIntensity("Occlusion Intensity", Range(0,1)) = 0
+        _MetallicIntensity("Metallic Intensity", Range(0,1)) = 0
+        _RoughnessIntensity("Roughness Intensity", Range(0,1)) = 0
+        _SmoothnessIntensity("Smoothness Intensity", Range(0,1)) = 0
+        _SpecularTintIntensity("Specular Tint Intensity", Range(0,1)) = 0
+        _ShadowIntensity("Shadow Intensity", Range(0,1)) = 0
+        _ShaodwColor("Shadow Color", Color) = (0,0,0,1)
+        //_EmissionIntensity("Emission Intensity", Range(0,1)) = 0
+
+        //_Roughness("Roughness", Range(0,1)) = 0
+        //_Metallic("Metallic", Range(0,1)) = 0
+        //_Smoothness("Smoothness", Range(0,1)) = 0.5
         _SpecularTint("Specular Tint", Color) = (1,1,1,1)
         _Emission("Emission", Color) = (0,0,0,0)
         _EmissionIntensity("Emission Intensity", Range(0,1)) = 0
-        _EmissionIntensity("Emission Intensity", Range(0,1)) = 0
+        //_EmissionIntensity("Emission Intensity", Range(0,1)) = 0
         _AlphaClip("Alpha Clip", Range(0,1)) = 0.333
         _OutLineWidth("Outline Width", Range(0,1)) = 0.01
         _MaxOutlineZoffset("Max Outline Zoffset", Range(0,1)) = 0.01
@@ -77,8 +91,29 @@ Shader "Unlit/pbr"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Deprecated.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/SurfaceData.hlsl"
 
+        #define PI 3.141592654
+
         #define kDielectricSpec half4(0.04, 0.04, 0.04, 1.0 - 0.04) // standard dielectric reflectivity coef at incident angle (= 4%)
         
+        float3 CalculateAmbientLighting(
+        BRDFData brdfData, 
+        float3 normalWS, 
+        float3 viewDirectionWS, 
+        float occlusion
+    ) {
+        // 1. 漫反射环境光（球谐函数）
+        float3 indirectDiffuse = SampleSH(normalWS) * brdfData.diffuse * occlusion;
+
+        // 2. 镜面反射环境光（基于反射探针或环境贴图）
+        float3 reflectVector = reflect(-viewDirectionWS, normalWS);
+        float3 indirectSpecular = GlossyEnvironmentReflection(
+            reflectVector,
+            brdfData.perceptualRoughness,
+            occlusion
+        );
+
+    return indirectDiffuse + indirectSpecular;
+}
 
         CBUFFER_START(UnityPerMaterial)
 
@@ -90,17 +125,36 @@ Shader "Unlit/pbr"
             
             TEXTURE2D(_BaseColorTex);
             //TEXTURE2D(_NormalTex);
-            TEXTURE2D(_OcclusionTex);
+            //TEXTURE2D(_OcclusionTex);
+            TEXTURE2D(_ILMTex);
+            SAMPLER(sampler_ILMTex);
+            TEXTURE2D( _RampTex);
+            SAMPLER(sampler_RampTex);
+            TEXTURE2D( _RampTex2);
+            SAMPLER(sampler_RampTex2);
+            //float4 _Color;
+            float _RampThreshold;
+            float _ShadowThreshold;
+            float _ShadowSmoothness;
+            float _ShadowIntensity;
+            float4 _ShaodwColor;
+
             
             //SAMPLER(sampler_LinearRepeat);
             
             //sampler2D _OcclusionTex;
             float _BumpScale;
-            float4 _OcclusionTex_ST;
-            float _Roughness;
-            float _Smoothness;
+            float _OcclusionIntensity;
+            float _MetallicIntensity;
+            float _RoughnessIntensity;
+            float _SmoothnessIntensity;
+            float _SpecularTintIntensity;
+            //float4 _OcclusionTex_ST;
+            //float4 _ILMTex;
+            //float _Roughness;
+            //float _Smoothness;
             float _SpecularTint;
-            float _Metallic;
+            //float _Metallic;
             float4 _Emission;
             float _EmissionIntensity;
             float _AlphaClip;
@@ -154,18 +208,10 @@ Shader "Unlit/pbr"
             float4 mainTex = SAMPLE_TEXTURE2D(_BaseColorTex, sampler_LinearRepeat, input.uv);
             float3 baseColor = mainTex.rgb * _Color.rgb;
             float baseAlpha = 1.0;
-            
-            //float4 pixelNormal = UnpackNormal(tex2D(_NormalTex, input.uv));
 
-            //half4 normalSample = SAMPLE_TEXTURE2D(_NormalTex, sampler_LinearRepeat, input.uv);
-            //half3 normalTS = UnpackNormalScale(normalSample, _BumpScale);  
             
             float3 normalWS = normalize(input.normalWS); 
             
-
-                // 构建TBN矩阵
-                //half3x3 TBN = half3x3(input.tangentWS.xyz, input.bitangentWS, input.normalWS);
-                //half3 normalWS = normalize(mul(normalTS, TBN));
             float3 pixelNormalWS = normalWS;
             if (_MaterialIDUSE == 0)
                 {
@@ -195,10 +241,10 @@ Shader "Unlit/pbr"
                  // 3. 定义 SurfaceData
                  SurfaceData surfaceData = (SurfaceData)0;
                 surfaceData.albedo = baseColor;
-                surfaceData.metallic = _Metallic;
+                surfaceData.metallic = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensity;
                 surfaceData.specular = kDielectricSpec.rgb;
-                surfaceData.smoothness = 1.0 - _Roughness;
-                surfaceData.occlusion = SAMPLE_TEXTURE2D(_OcclusionTex, sampler_LinearRepeat, input.uv).g;
+                surfaceData.smoothness =  1 - SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y * _RoughnessIntensity;
+                surfaceData.occlusion = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).z * _OcclusionIntensity;
                 surfaceData.alpha = baseAlpha;
                 surfaceData.emission = _Emission.rgb * _EmissionIntensity;
                 surfaceData.clearCoatMask = 0.0;
@@ -224,18 +270,79 @@ Shader "Unlit/pbr"
             Light mainLight = GetMainLight(shadowCoord);
             float3 lightDirWS = normalize(mainLight.direction);
             float3 lightDirectionWSFloat3 = lightDirWS;
-            float3 halfDir = SafeNormalize(lightDirectionWSFloat3 + input.viewDirWS);
+            float3 halfDirWS = SafeNormalize(lightDirectionWSFloat3 + input.viewDirWS);
             //float NoH = saturate(dot(pixelNormalWS, halfDir));
             //half LoH = half(saturate(dot(lightDirectionWSFloat3, halfDir)));
             
 
             float3 lightColor = mainLight.color;
+            float  NoL = saturate(dot(pixelNormalWS, lightDirWS));
+            float stepNoL = smoothstep(0.1, 0.9, NoL);
+            float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
 
-            float3 directDiffuse = brdfData.diffuse * mainLight.color * saturate(dot(pixelNormalWS, lightDirWS)) / PI;
+            float ao = surfaceData.occlusion;
+            //float3 ambient = CalculateAmbientLighting(brdfData, pixelNormalWS, input.viewDirWS, surfaceData.occlusion);
+            //float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
+
+
+            float shadowMask = smoothstep(
+            _ShadowThreshold - _ShadowSmoothness,
+            _ShadowThreshold + _ShadowSmoothness,
+            HalfLambert
+        );
+
+        float  HalfLambertStep = smoothstep(0.2, 0.9, HalfLambert);
+            // 
+            float rampU = clamp(smoothstep(0.0, 1.0, HalfLambert), 0.005, 0.995);
+            float rampV = _RampThreshold;
+            float3 rampColor = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, float2(rampU, rampV)).rgb;
+
+            float rampU2 = clamp(smoothstep(0.0, 1.0, HalfLambert), 0.005, 0.995);
+            //float2 rampUV2 = float2(step(HalfLambert , (1 - shadowMask)), 0.5);
+            float rampV2 = _RampThreshold;
+            float3 rampColor2 = SAMPLE_TEXTURE2D(_RampTex2, sampler_LinearClamp, float2(rampU, rampV)).rgb;
+
+            float shadow = 1 - smoothstep(
+    (1 - shadowMask) - _ShadowSmoothness, 
+    (1 - shadowMask) + _ShadowSmoothness, 
+    HalfLambert
+);
+
+            rampColor2 *= shadow;
+            
+            //rampColor2 = step(rampColor2,shadowMask);
+
+
+            //half3 shadowColor = lerp(baseColor, baseColor * rampColor2, 1);
+
+            half3 finRampColor = rampColor + rampColor2;
+
+            finRampColor = saturate(0.5 + 0.5 * finRampColor);
+
+            
+
+
+
+            //half3 shadowColor = lerp(baseColor, baseColor * finRampColor, _ShadowIntensity) * _ShaodwColor.rgb;
+            //计算漫反射项
+            //half3 diffuse = lerp(shadowColor, baseColor, HalfLambertStep);//明部到阴影是在0.423到0.460之间过渡的
+            //diffuse = lerp(shadowColor, diffuse, );//将ILM贴图的g通道乘2 用saturate函数将超过1的部分去掉，混合常暗区域（AO）
+            //diffuse = lerp(diffuse, baseColor, 1);//将ILM贴图的g通道减0.5乘2 用saturate函数将小于0的部分去掉，混合常亮部分（眼睛）
+            //diffuse = diffuse + diffuse;
+
+            float3 finColor = finRampColor * baseColor;
+            
+
+            //float quantizedNdotL = floor(stepNoL * _RampThreshold * 4) / (_RampThreshold * 4);
+            //float stepquantizedNdotL = smoothstep(0.0, 0.9 , quantizedNdotL);
+            //float2 rampUV = float2(stepquantizedNdotL, 0.5);
+            //float3 rampColor = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, rampUV).rgb;
+
+            float3 directDiffuse = brdfData.diffuse * mainLight.color * rampColor / PI;
             float3 directSpecular = DirectBRDF(brdfData, pixelNormalWS, -lightDirWS, input.viewDirWS) * mainLight.color * saturate(dot(pixelNormalWS, lightDirWS));
 
             float3 ambient = UNITY_LIGHTMODEL_AMBIENT.rgb * baseColor;
-            float3 diffuse = directDiffuse + ambient;
+            //float3 diffuse = directDiffuse + ambient;
             float3 specular = directSpecular;
 
 
@@ -248,7 +355,7 @@ Shader "Unlit/pbr"
             //float3 diffuse = baseColor * NoL * lightColor;
             
 
-            return float4(diffuse,baseAlpha);
+            return float4(finColor,baseAlpha);
         }
 
         ENDHLSL
