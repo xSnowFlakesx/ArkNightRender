@@ -7,12 +7,14 @@ Shader "Unlit/pbr"
         _NormalTex("Normal Tex", 2D) = "bump" {}
         _BumpScale("Bump Scale", Range(-5,5)) = 1
         _ILMTex("ILM Tex", 2D) = "white" {}
+        _SDFTex("SDF Tex", 2D) = "white" {}
         _RampTex ("Ramp Texture", 2D) = "white" {}
         _RampTex2 ("Ramp Texture2", 2D) = "white" {}
         _ShadowThreshold ("Shadow Threshold", Range(0,1)) = 0.5
         _ShadowSmoothness ("Shadow Smoothness", Range(0,1)) = 0.1
         _RampThreshold ("Ramp Threshold", Range(0,1)) = 0.5
         _MaterialIDUSE("Material ID USE", Range(0,4)) = 0
+        _SDFIDUSE("SDF ID USE", Range(0,4)) = 0
         _OcclusionIntensity("Occlusion Intensity", Range(0,1)) = 0
         _MetallicIntensity("Metallic Intensity", Range(0,1)) = 0
         _RoughnessIntensity("Roughness Intensity", Range(0,1)) = 0
@@ -20,6 +22,17 @@ Shader "Unlit/pbr"
         _SpecularTintIntensity("Specular Tint Intensity", Range(0,1)) = 0
         _ShadowIntensity("Shadow Intensity", Range(0,1)) = 0
         _ShaodwColor("Shadow Color", Color) = (0,0,0,1)
+        _SHIntensity("SH Intensity", Range(0,1)) = 0
+        _aoUsage("AO Usage", Range(0,1)) = 0
+        _AmbientIntensity("Ambient Intensity", Range(0,1)) = 0
+        _Ambientpower("Ambient Power", Range(0,1)) = 0
+
+        [HideInInspector]_HeadCenter("Head Center", Vector) = (0,0,0)
+        [HideInInspector]_HeadForward("Head Forward", Vector) = (0,0,0)
+        [HideInInspector]_HeadRight("Head Right", Vector) = (0,0,0)
+
+        _FaceshadowOffset("Face shadow Offset", Range(0,1)) = 0.1
+        _TransitionWidth("Transition Width", Range(0,1)) = 0.05
         //_EmissionIntensity("Emission Intensity", Range(0,1)) = 0
 
         //_Roughness("Roughness", Range(0,1)) = 0
@@ -91,7 +104,7 @@ Shader "Unlit/pbr"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Deprecated.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/SurfaceData.hlsl"
 
-        #define PI 3.141592654
+        //#define PI 3.141592654
 
         #define kDielectricSpec half4(0.04, 0.04, 0.04, 1.0 - 0.04) // standard dielectric reflectivity coef at incident angle (= 4%)
         
@@ -122,6 +135,9 @@ Shader "Unlit/pbr"
             float4 _Color;
             TEXTURE2D(_NormalTex);
             SAMPLER(sampler_NormalTex);
+
+            sampler2D _SDFTex;
+            //SAMPLER(sampler_SDFTex);
             
             TEXTURE2D(_BaseColorTex);
             //TEXTURE2D(_NormalTex);
@@ -138,6 +154,15 @@ Shader "Unlit/pbr"
             float _ShadowSmoothness;
             float _ShadowIntensity;
             float4 _ShaodwColor;
+            float _SHIntensity;
+            float _aoUsage;
+            float _AmbientIntensity;
+            float _Ambientpower;
+            float3 _HeadCenter;
+            float3 _HeadForward;
+            float3 _HeadRight;
+            float _FaceshadowOffset;
+            float _TransitionWidth;
 
             
             //SAMPLER(sampler_LinearRepeat);
@@ -159,6 +184,7 @@ Shader "Unlit/pbr"
             float _EmissionIntensity;
             float _AlphaClip;
             float _MaterialIDUSE;
+            float _SDFIDUSE;
 
         CBUFFER_END
 
@@ -180,7 +206,8 @@ Shader "Unlit/pbr"
             float4 tangentWS               : TEXCOORD3;
             float3 bitangentWS             : TEXCOORD4;
             float3 viewDirWS                : TEXCOORD5;
-            float4 positionCS              : SV_POSITION;               
+            float4 positionCS              : SV_POSITION;
+            float3 SH                      : TEXCOORD6;               
         };
 
         UniversalVaryings MainVS(UniversalAttributes input)
@@ -199,6 +226,7 @@ Shader "Unlit/pbr"
             output.bitangentWS = normalInputs.bitangentWS;
             output.viewDirWS = unity_OrthoParams.w == 0 ? GetCameraPositionWS() - positionInputs.positionWS : GetWorldToViewMatrix()[2].xyz;
             output.uv = input.texcoord;
+            output.SH = SampleSH(lerp(normalInputs.normalWS,float3(0,0,0),_SHIntensity));
             return output;
         }
 
@@ -276,11 +304,20 @@ Shader "Unlit/pbr"
             
 
             float3 lightColor = mainLight.color;
-            float  NoL = saturate(dot(pixelNormalWS, lightDirWS));
-            float stepNoL = smoothstep(0.1, 0.9, NoL);
-            float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
-
+            float3 diffuse = 0;
             float ao = surfaceData.occlusion;
+            float3 ambient = input.SH.rgb * _Ambientpower;
+            ambient *= lerp(1, ao, _aoUsage);
+            ambient = lerp(ambient, baseColor, _AmbientIntensity);
+
+            if (_SDFIDUSE == 0)
+            {
+            float  NoL = saturate(dot(pixelNormalWS, halfDirWS));
+            float stepNoL = smoothstep(0.0, 1, NoL);
+            float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
+            //HalfLambert = pow(HalfLambert, 2.0);
+
+
             //float3 ambient = CalculateAmbientLighting(brdfData, pixelNormalWS, input.viewDirWS, surfaceData.occlusion);
             //float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
 
@@ -291,13 +328,13 @@ Shader "Unlit/pbr"
             HalfLambert
         );
 
-        float  HalfLambertStep = smoothstep(0.2, 0.9, HalfLambert);
+        //float  HalfLambertStep = smoothstep(0.2, 0.9, HalfLambert);
             // 
-            float rampU = clamp(smoothstep(0.0, 1.0, HalfLambert), 0.005, 0.995);
+            float rampU = HalfLambert;
             float rampV = _RampThreshold;
             float3 rampColor = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, float2(rampU, rampV)).rgb;
 
-            float rampU2 = clamp(smoothstep(0.0, 1.0, HalfLambert), 0.005, 0.995);
+            float rampU2 = HalfLambert;
             //float2 rampUV2 = float2(step(HalfLambert , (1 - shadowMask)), 0.5);
             float rampV2 = _RampThreshold;
             float3 rampColor2 = SAMPLE_TEXTURE2D(_RampTex2, sampler_LinearClamp, float2(rampU, rampV)).rgb;
@@ -307,8 +344,10 @@ Shader "Unlit/pbr"
     (1 - shadowMask) + _ShadowSmoothness, 
     HalfLambert
 );
-
-            rampColor2 *= shadow;
+            shadow = smoothstep(0.1, 1.0, shadow);
+            
+            rampColor2 = lerp(rampColor2, float3(1,1,1), 0.7);
+            rampColor2 *= shadow * 0.6;
             
             //rampColor2 = step(rampColor2,shadowMask);
 
@@ -317,7 +356,7 @@ Shader "Unlit/pbr"
 
             half3 finRampColor = rampColor + rampColor2;
 
-            finRampColor = saturate(0.5 + 0.5 * finRampColor);
+            //finRampColor = saturate(0.5 + 0.5 * finRampColor);
 
             
 
@@ -329,19 +368,125 @@ Shader "Unlit/pbr"
             //diffuse = lerp(shadowColor, diffuse, );//将ILM贴图的g通道乘2 用saturate函数将超过1的部分去掉，混合常暗区域（AO）
             //diffuse = lerp(diffuse, baseColor, 1);//将ILM贴图的g通道减0.5乘2 用saturate函数将小于0的部分去掉，混合常亮部分（眼睛）
             //diffuse = diffuse + diffuse;
+   
 
-            float3 finColor = finRampColor * baseColor;
+             diffuse = (finRampColor * baseColor * mainLight.color + ambient) / PI;
+            }
+            else{
+                diffuse = 0;
+            }
+            //diffuse = diffuse +  ambient;
             
+            //float3 sdf = SAMPLE_TEXTURE2D(_SDFTex, sampler_SDFTex, input.uv).rgb;
+            float sdfThreshold = 0;
+            float sdfVlaue = 0;
+            float transitionWidth = 0;
+            float sdfFace = 0;
+            float3 finRampColorface = 0;
+            float3 diffuseface = 0;
+
+
+            if (_SDFIDUSE > 0)
+            {
+
+            float3 headForward = normalize(_HeadForward - _HeadCenter);
+            float3 headRight = normalize(_HeadRight - _HeadCenter);
+            float3 headUp = normalize(cross(headForward, headRight));
+
+            float3 fixedLightDir = normalize(lightDirWS - dot(lightDirWS, headUp) * headUp);
+
+            float Sx = dot(fixedLightDir, headRight);
+            float Sz = dot(fixedLightDir, -headForward);
+            sdfThreshold = atan2(Sx,Sz) / PI;
+            sdfThreshold = sdfThreshold > 0 ? (1 - sdfThreshold) : (1 + sdfThreshold);
+
+            float2 sdfUV = input.uv * float2( -1, 1);
+            if (dot(fixedLightDir, headRight) > 0)
+            {
+                sdfUV.x = 1 - sdfUV.x;
+            }
+
+            float4 sdfDate = tex2D(_SDFTex, sdfUV);
+            float sdfVlaueR = sdfDate.r;
+            float sdfVlaueG = sdfDate.g;
+            float sdfVlaueB = sdfDate.b;
+             sdfVlaue = saturate((sdfVlaueR + sdfVlaueG) * sdfVlaueB);
+             sdfVlaue += _FaceshadowOffset;
+            transitionWidth = _TransitionWidth;
+             sdfFace = smoothstep(
+                sdfThreshold - transitionWidth, 
+                sdfThreshold + transitionWidth, 
+                sdfVlaue
+            );
+
+
+            float shadowMaskface = smoothstep(
+                _ShadowThreshold - _ShadowSmoothness,
+                _ShadowThreshold + _ShadowSmoothness,
+                sdfFace
+            );
+
+            float rampUface = sdfFace;
+            float rampVface = _RampThreshold;
+            float3 rampColorface = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, float2(rampUface, rampVface)).rgb;
+
+            float rampU2face = sdfFace;
+            //float2 rampUV2 = float2(step(HalfLambert , (1 - shadowMask)), 0.5);
+            float rampV2face = _RampThreshold;
+            float3 rampColor2face = SAMPLE_TEXTURE2D(_RampTex2, sampler_LinearClamp, float2(rampUface, rampVface)).rgb;
+
+            float shadowface = 1 - smoothstep(
+    (1 - shadowMaskface) - _ShadowSmoothness, 
+    (1 - shadowMaskface) + _ShadowSmoothness, 
+    sdfFace
+);
+            shadowface = smoothstep(0.1, 1.0, shadowface);
+            
+            rampColor2face = lerp(rampColor2face, float3(1,1,1), 0.7);
+            rampColor2face *= shadowface * 0.6;
+            
+            //rampColor2 = step(rampColor2,shadowMask);
+
+
+            //half3 shadowColor = lerp(baseColor, baseColor * rampColor2, 1);
+
+             finRampColorface = rampColorface + rampColor2face;
+
+             diffuseface = (finRampColorface * baseColor * mainLight.color + ambient) / PI;
+
+        }
+        else
+        {
+            sdfThreshold = 0;
+            sdfVlaue = 0;
+            transitionWidth = 0;
+            sdfFace = 0;
+             finRampColorface = 0;
+             diffuseface = 0;
+        }
+
+            //float sdfFace = step(sdfThreshold, sdfVlaue);
+             // 过渡区间宽度（可调参数）
+
+            
+
+            
+
+            // float2 sdfUV = float2(sign(dot(fixedLightDir, headRight)),1) * input.uv; 
+            // float sdfVlaue = SAMPLE_TEXTURE2D(_SDFTex, sampler_SDFTex, sdfUV).rgb;
+            // sdfVlaue += _FaceshadowOffset;
+            // float sdfThreshold = 1 - (dot(fixedLightDir, headForward) * 0.5 + 0.5);
+            // float sdfFace = step(sdfThreshold, sdfVlaue);
 
             //float quantizedNdotL = floor(stepNoL * _RampThreshold * 4) / (_RampThreshold * 4);
             //float stepquantizedNdotL = smoothstep(0.0, 0.9 , quantizedNdotL);
             //float2 rampUV = float2(stepquantizedNdotL, 0.5);
             //float3 rampColor = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, rampUV).rgb;
 
-            float3 directDiffuse = brdfData.diffuse * mainLight.color * rampColor / PI;
+            //float3 directDiffuse = brdfData.diffuse * mainLight.color * finRampColor / PI;
             float3 directSpecular = DirectBRDF(brdfData, pixelNormalWS, -lightDirWS, input.viewDirWS) * mainLight.color * saturate(dot(pixelNormalWS, lightDirWS));
 
-            float3 ambient = UNITY_LIGHTMODEL_AMBIENT.rgb * baseColor;
+            //float3 ambient = UNITY_LIGHTMODEL_AMBIENT.rgb * baseColor;
             //float3 diffuse = directDiffuse + ambient;
             float3 specular = directSpecular;
 
@@ -355,7 +500,7 @@ Shader "Unlit/pbr"
             //float3 diffuse = baseColor * NoL * lightColor;
             
 
-            return float4(finColor,baseAlpha);
+            return float4(diffuse + diffuseface,baseAlpha);
         }
 
         ENDHLSL
@@ -400,7 +545,7 @@ Shader "Unlit/pbr"
 
             float4 GetShadowPositionHClip(Attributes IN)
             {
-                float3 positionWS = TransformObjectToWorld(IN.positionOS).xyz;
+                float3 positionWS = TransformObjectToWorld(IN.positionOS.xyz);
                 float3 normalWS = TransformObjectToWorldNormal(IN.normalOS);
 
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW
@@ -749,7 +894,7 @@ Shader "Unlit/pbr"
                 
 
                 //float3 baseMapColor = SAMPLE_TEXTURE2D(_BaseColorTex, sampler_LinearRepeat, input.uv);
-                outlineColor *= 0.4;
+                outlineColor *= 0.1;
 
                 float4 color = float4(outlineColor,1);
                 color.rgb = MixFog(color.rgb, input.fogFactor);
