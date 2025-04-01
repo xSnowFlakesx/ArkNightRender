@@ -17,6 +17,7 @@ Shader "Unlit/pbr"
         _SDFIDUSE("SDF ID USE", Range(0,4)) = 0
         _OcclusionIntensity("Occlusion Intensity", Range(0,1)) = 0
         _MetallicIntensity("Metallic Intensity", Range(0,1)) = 0
+        _MetallicColor("Metallic Color",Color) = (0,0,0,1)
         _RoughnessIntensity("Roughness Intensity", Range(0,1)) = 0
         _SmoothnessIntensity("Smoothness Intensity", Range(0,1)) = 0
         _SpecularTintIntensity("Specular Tint Intensity", Range(0,1)) = 0
@@ -26,6 +27,17 @@ Shader "Unlit/pbr"
         _aoUsage("AO Usage", Range(0,1)) = 0
         _AmbientIntensity("Ambient Intensity", Range(0,1)) = 0
         _Ambientpower("Ambient Power", Range(0,1)) = 0
+        _EmissionMask("Emission Mask", 2D) = "white" {}
+        _FresnelPower("Fresnel Power", Range(0, 10)) = 5.0   // 控制边缘宽度
+        _FresnelScale("Fresnel Scale", Range(0, 1)) = 0.5    // 控制强度
+        _EdgeColor("Edge Color", Color) = (1, 0.5, 0, 1)     // 边缘光颜色
+
+        _SpecularPowerValue("_Specular Power Value",Range(0,50)) = 10
+        _SpecularScaleValue("_SpecularS cale Value",Range(0,10)) = 1
+        _SpecularphongIntensity("Specular phong Intensity",Range(0,50)) = 5
+        _SpecularphongIntensitytint("Specular phong Intensitytint",Color) = (0,0,0,1)
+
+
 
         [HideInInspector]_HeadCenter("Head Center", Vector) = (0,0,0)
         [HideInInspector]_HeadForward("Head Forward", Vector) = (0,0,0)
@@ -39,8 +51,8 @@ Shader "Unlit/pbr"
         //_Metallic("Metallic", Range(0,1)) = 0
         //_Smoothness("Smoothness", Range(0,1)) = 0.5
         _SpecularTint("Specular Tint", Color) = (1,1,1,1)
-        _Emission("Emission", Color) = (0,0,0,0)
-        _EmissionIntensity("Emission Intensity", Range(0,1)) = 0
+        _EmissionColor("Emission color", Color) = (0,0,0,0)
+        _EmissionIntensity("Emission Intensity", Range(0,10)) = 1
         //_EmissionIntensity("Emission Intensity", Range(0,1)) = 0
         _AlphaClip("Alpha Clip", Range(0,1)) = 0.333
         _OutLineWidth("Outline Width", Range(0,1)) = 0.01
@@ -105,6 +117,8 @@ Shader "Unlit/pbr"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/SurfaceData.hlsl"
 
         //#define PI 3.141592654
+        #define Eplison 0.001
+        #define EPSILON 1e-5
 
         #define kDielectricSpec half4(0.04, 0.04, 0.04, 1.0 - 0.04) // standard dielectric reflectivity coef at incident angle (= 4%)
         
@@ -125,8 +139,35 @@ Shader "Unlit/pbr"
             occlusion
         );
 
+        //D
+            
+
     return indirectDiffuse + indirectSpecular;
 }
+// Schlick-GGX几何遮蔽
+        float G_SchlickGGX(float NoV, float k)
+        {
+            return NoV / (NoV * (1.0 - k) + k);
+        }
+
+// Smith联合几何遮蔽
+        float G_Smith(float NoV, float NoL, float Roughness)
+        {
+            float k = (Roughness + 1.0) * (Roughness + 1.0) / 8.0;
+            return G_SchlickGGX(NoL, k) * G_SchlickGGX(NoV, k);
+        }
+
+        // Schlick菲涅尔近似
+        float3 F_Schlick(float cosTheta, float3 F0)
+        {
+            return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+        }
+
+        // 能量守恒版本菲涅尔
+        float3 F_SchlickRoughness(float cosTheta, float3 F0, float Roughness)
+        {
+            return F0 + (max(1.0 - Roughness, F0) - F0) * pow(1.0 - cosTheta, 5.0);
+        }
 
         CBUFFER_START(UnityPerMaterial)
 
@@ -148,6 +189,8 @@ Shader "Unlit/pbr"
             SAMPLER(sampler_RampTex);
             TEXTURE2D( _RampTex2);
             SAMPLER(sampler_RampTex2);
+            sampler2D _EmissionMask;
+            float4 _MetallicColor;
             //float4 _Color;
             float _RampThreshold;
             float _ShadowThreshold;
@@ -163,6 +206,13 @@ Shader "Unlit/pbr"
             float3 _HeadRight;
             float _FaceshadowOffset;
             float _TransitionWidth;
+            float _FresnelPower;
+            float _FresnelScale;
+            float4 _EdgeColor;
+            float _SpecularPowerValue;
+            float _SpecularScaleValue;
+            float _SpecularphongIntensity;
+            float3 _SpecularphongIntensitytint;
 
             
             //SAMPLER(sampler_LinearRepeat);
@@ -180,13 +230,16 @@ Shader "Unlit/pbr"
             //float _Smoothness;
             float _SpecularTint;
             //float _Metallic;
-            float4 _Emission;
+            float4 _EmissionColor;
             float _EmissionIntensity;
             float _AlphaClip;
             float _MaterialIDUSE;
             float _SDFIDUSE;
 
         CBUFFER_END
+
+        
+
 
         //SAMPLER(sampler_LinearRepeat);
 
@@ -207,7 +260,9 @@ Shader "Unlit/pbr"
             float3 bitangentWS             : TEXCOORD4;
             float3 viewDirWS                : TEXCOORD5;
             float4 positionCS              : SV_POSITION;
-            float3 SH                      : TEXCOORD6;               
+            float3 SH                      : TEXCOORD6;  
+            float3 positionWS : TEXCOORD7;       
+            float4 shadowCoord : TEXCOORD8; // 新增阴影坐标     
         };
 
         UniversalVaryings MainVS(UniversalAttributes input)
@@ -217,16 +272,25 @@ Shader "Unlit/pbr"
 
 
             UniversalVaryings output;
-            output.positionCS = positionInputs.positionCS;
+            output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+            output.positionWS = TransformObjectToWorld(input.positionOS.xyz);
+            //output.positionCS = positionInputs.positionCS;
             output.positionWSAndFogFactor = float4(positionInputs.positionWS,ComputeFogFactor(positionInputs.positionCS.z));
 
-            output.normalWS = normalInputs.normalWS;
-            output.tangentWS.xyz = normalInputs.tangentWS;
-            output.tangentWS.w = input.tangentOS.w * GetOddNegativeScale();
-            output.bitangentWS = normalInputs.bitangentWS;
+            // 计算世界空间法线
+    output.normalWS = TransformObjectToWorldNormal(input.normalOS);
+    
+    // 计算世界空间切线
+    output.tangentWS.xyz = TransformObjectToWorldDir(input.tangentOS.xyz);
+    output.tangentWS.w = input.tangentOS.w; // 保存手性
+    
+    // 计算副切线（叉乘法线与切线）
+    output.bitangentWS = cross(output.normalWS, output.tangentWS.xyz) * 
+                        (input.tangentOS.w * unity_WorldTransformParams.w);
             output.viewDirWS = unity_OrthoParams.w == 0 ? GetCameraPositionWS() - positionInputs.positionWS : GetWorldToViewMatrix()[2].xyz;
             output.uv = input.texcoord;
             output.SH = SampleSH(lerp(normalInputs.normalWS,float3(0,0,0),_SHIntensity));
+            output.shadowCoord = TransformWorldToShadowCoord(output.positionWS);
             return output;
         }
 
@@ -250,19 +314,35 @@ Shader "Unlit/pbr"
                 {
                     // 使用法线贴图
 
-                float4 lightData = SAMPLE_TEXTURE2D(_NormalTex,sampler_NormalTex, input.uv);
-                lightData = lightData * 2 - 1;
-                //diffuseBias = lightData.z * 2;
+                // float4 lightData = SAMPLE_TEXTURE2D(_NormalTex,sampler_NormalTex, input.uv);
+                // lightData = lightData * 2 - 1;
+                // //diffuseBias = lightData.z * 2;
 
-                float sgn = input.tangentWS.w;
-                float3 tangentWS = normalize(input.tangentWS.xyz);
-                float3 bitangentWS = cross(normalWS, tangentWS) * sgn;
+                // float sgn = input.tangentWS.w;
+                // float3 tangentWS = normalize(input.tangentWS.xyz);
+                // float3 bitangentWS = cross(normalWS, tangentWS) * sgn;
 
-                float3 pixelNormalTS = float3(lightData.xy,0.0);
-                pixelNormalTS.xy *= _BumpScale;
-                pixelNormalTS.z = sqrt(1.0 - min(0.0, dot(pixelNormalTS.xy, pixelNormalTS.xy)));
-                pixelNormalWS = TransformTangentToWorld(pixelNormalTS,float3x3(tangentWS,bitangentWS,normalWS));
-                pixelNormalWS = normalize(pixelNormalWS);
+                // float3 pixelNormalTS = float3(lightData.xy,0.0);
+                // pixelNormalTS.xy *= _BumpScale;
+                // pixelNormalTS.z = sqrt(1.0 - min(0.0, dot(pixelNormalTS.xy, pixelNormalTS.xy)));
+                // pixelNormalWS = TransformTangentToWorld(pixelNormalTS,float3x3(tangentWS,bitangentWS,normalWS));
+                // pixelNormalWS = normalize(pixelNormalWS);
+
+                // 采样法线贴图
+    half4 packedNormal = SAMPLE_TEXTURE2D(_NormalTex, sampler_NormalTex, input.uv);
+    
+    // 解包法线（从[0,1]映射到[-1,1]）
+    half3 pixelNormalTS = UnpackNormalScale(packedNormal, _BumpScale);
+    
+    // 构建TBN矩阵
+    float3x3 TBN = float3x3(
+        input.tangentWS.xyz,
+        input.bitangentWS,
+        input.normalWS
+    );
+    
+    // 将法线转换到世界空间
+     pixelNormalWS = normalize(mul(pixelNormalTS, TBN));
             }
 
                 //float3 baseColor = mainTex.rgb * _Color.rgb;
@@ -274,7 +354,7 @@ Shader "Unlit/pbr"
                 surfaceData.smoothness =  1 - SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y * _RoughnessIntensity;
                 surfaceData.occlusion = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).z * _OcclusionIntensity;
                 surfaceData.alpha = baseAlpha;
-                surfaceData.emission = _Emission.rgb * _EmissionIntensity;
+                surfaceData.emission = _EmissionColor.rgb * _EmissionIntensity;
                 surfaceData.clearCoatMask = 0.0;
                 surfaceData.clearCoatSmoothness = 0.0;
 
@@ -295,26 +375,142 @@ Shader "Unlit/pbr"
             float3 positionWS = input.positionWSAndFogFactor.xyz;
 
             float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
-            Light mainLight = GetMainLight(shadowCoord);
+            Light mainLight = GetMainLight();
             float3 lightDirWS = normalize(mainLight.direction);
             float3 lightDirectionWSFloat3 = lightDirWS;
             float3 halfDirWS = SafeNormalize(lightDirectionWSFloat3 + input.viewDirWS);
+            float3 V = normalize(input.viewDirWS);
+            float3 N = pixelNormalWS;
+            float3 L = lightDirectionWSFloat3;
+            float3 H = halfDirWS;
+
+            float NoL = saturate(dot(N, L));
+            float NoV = saturate(dot(N, V));
+            float NoH = saturate(dot(N, H));
+            float VoH = saturate(dot(V, H));
+
+            float materialid = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y;
+               
+
+            float Roughness = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).a * _RoughnessIntensity;
+             Roughness = max(Roughness, 0.001);
+             float Metallic = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y * SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensity;
+
+             float3 F0 = lerp(float3(0.04,0.04,0.04), baseColor, Metallic);
+
+            // BRDF计算 ------------------------------
+                // 法线分布
+                float D = D_GGX(NoH, Roughness);
+                // 几何遮蔽
+                float G = G_Smith(NoV, NoL, Roughness);
+                
+                // 菲涅尔项
+                float3 F = F_Schlick(VoH, F0);
+
+
+                // 镜面反射项
+                float3 specular = (D * G * F) / max(4.0 * NoV * NoL, EPSILON);
+                float3 specularmetllic = specular * Metallic;
+
+                // 漫反射项
+                float3 kD = max((1.0 - F),0.1) * (1.0 - Metallic);
+                float3 diffusePBR = kD * baseColor / PI;
+
+                // 光照组合
+                float3 radiance = mainLight.color * mainLight.distanceAttenuation;
+                float3 directLight = (diffusePBR + specular) * radiance * NoL;
+
+                // 环境光照 ------------------------------
+                // 漫反射环境
+                float3 ambientDiffuse = SampleSH(N) * baseColor * kD;
+                
+                // 镜面反射环境
+                float3 R = reflect(-V, N);
+                float3 prefilteredColor = GlossyEnvironmentReflection(
+                    R,
+                    Roughness * Roughness,
+                    0.0
+                );
+                float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
+                
+                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.1;
+
+                 // 最终颜色
+                float3 finalColorPBR = directLight + ambientPBR;
+
+
+            
             //float NoH = saturate(dot(pixelNormalWS, halfDir));
             //half LoH = half(saturate(dot(lightDirectionWSFloat3, halfDir)));
             
 
             float3 lightColor = mainLight.color;
             float3 diffuse = 0;
+
+
+             
+
+
             float ao = surfaceData.occlusion;
+         
             float3 ambient = input.SH.rgb * _Ambientpower;
             ambient *= lerp(1, ao, _aoUsage);
             ambient = lerp(ambient, baseColor, _AmbientIntensity);
+            //float3 Radiance = mainLight.color;
 
+
+            // float HV = max(dot(halfDirWS, V), 0);
+            //     float NV = max(dot(N, V), 0);
+            //     float NL = max(dot(N, L), 0);
+
+                
+                
+
+                
+
+                //float3 KS = F;
+                // float3 KD = 1 - KS;
+                // KD *= 1 - Metallic;
+                // float3 nominator = D * F * G;
+                // float denominator = max(4 * NV * NL, 0.001);
+                // float3 Specular = nominator / denominator;
+                // // Specular =max( Specular,0);
+
+                // //Diffuse
+                // // float3 Diffuse = KD * BaseColor / PI;
+                // float3 Diffuse = KD * baseColor; //没有除以 PI
+
+                // float3 DirectLight = (Diffuse + Specular) * NL * Radiance;
+
+            float EmissionMask = tex2D(_EmissionMask, input.uv);
+            float3 EmissionColor = _EmissionColor.rgb * _EmissionIntensity * EmissionMask;
+
+            // 菲涅尔计算
+                //float3 normalWS = normalize(input.normalWS);
+                //float3 viewDirWS = normalize(input.viewDirWS);
+                float fresnel = pow(1.0 - saturate(dot(pixelNormalWS, normalize(input.viewDirWS))), _FresnelPower);
+                fresnel = smoothstep(0.3,0.8,fresnel);
+                float3 edgeGlow = mainLight.color * _EdgeColor.rgb * fresnel * _FresnelScale * Roughness;
+                float3 edgeGlow2 = mainLight.color * _EdgeColor.rgb * fresnel * _FresnelScale;
+                edgeGlow += edgeGlow2;
+                edgeGlow *= lerp(baseColor,float3(1,1,1),0.9);
+                edgeGlow *= NoL;
+
+                float4 Specularphong = pow(NoH,_SpecularPowerValue)*_SpecularScaleValue * Metallic;
+                float SpecularphongIntensity = _SpecularphongIntensity;
+                float3 SpecularphongIntensitytint = _SpecularphongIntensitytint;
+                Specularphong = smoothstep(0.2,0.7,Specularphong);
+                float3 SpecularphongColor = Specularphong * baseColor *  SpecularphongIntensitytint * SpecularphongIntensity;
+
+//          Cloth
             if (_SDFIDUSE == 0)
             {
-            float  NoL = saturate(dot(pixelNormalWS, halfDirWS));
+            float  NoL = saturate(dot(pixelNormalWS, lightDirWS));
             float stepNoL = smoothstep(0.0, 1, NoL);
             float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
+
+            
+             
             //HalfLambert = pow(HalfLambert, 2.0);
 
 
@@ -356,6 +552,45 @@ Shader "Unlit/pbr"
 
             half3 finRampColor = rampColor + rampColor2;
 
+            // BRDF计算 ------------------------------
+                // 法线分布
+                float D = D_GGX(NoH, Roughness);
+                // 几何遮蔽
+                float G = G_Smith(NoV, NoL, Roughness);
+                
+                // 菲涅尔项
+                float3 F = F_Schlick(VoH, F0);
+
+
+                // 镜面反射项
+                float3 specular = (D * G * F) / max(4.0 * NoV * finRampColor, EPSILON);
+
+                // 漫反射项
+                float3 kD = max((1.0 - F),0.1) * (1.0 - Metallic);
+                float3 diffusePBR = kD * baseColor / PI;
+
+                // 光照组合
+                float3 radiance = mainLight.color * mainLight.distanceAttenuation;
+                float3 directLight = (diffusePBR + specular) * radiance * finRampColor;
+
+                // 环境光照 ------------------------------
+                // 漫反射环境
+                float3 ambientDiffuse = SampleSH(N) * baseColor * kD;
+                
+                // 镜面反射环境
+                float3 R = reflect(-V, N);
+                float3 prefilteredColor = GlossyEnvironmentReflection(
+                    R,
+                    Roughness * Roughness,
+                    0.0
+                );
+                float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
+                
+                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.3;
+
+                 // 最终颜色
+                float3 finalColorPBR = directLight + ambientPBR;
+
             //finRampColor = saturate(0.5 + 0.5 * finRampColor);
 
             
@@ -369,8 +604,11 @@ Shader "Unlit/pbr"
             //diffuse = lerp(diffuse, baseColor, 1);//将ILM贴图的g通道减0.5乘2 用saturate函数将小于0的部分去掉，混合常亮部分（眼睛）
             //diffuse = diffuse + diffuse;
    
+//diffuse = finalColorPBR;
+            float shadowAttenuation = mainLight.shadowAttenuation * MainLightRealtimeShadow(input.shadowCoord);
+            shadowAttenuation = saturate(0.5 + 0.5 * shadowAttenuation);
 
-             diffuse = (finRampColor * baseColor * mainLight.color + ambient) / PI;
+             diffuse = (finRampColor * kD * baseColor * mainLight.color + ambientPBR)  * shadowAttenuation * ao / PI;
             }
             else{
                 diffuse = 0;
@@ -384,6 +622,8 @@ Shader "Unlit/pbr"
             float sdfFace = 0;
             float3 finRampColorface = 0;
             float3 diffuseface = 0;
+
+//       Face
 
 
             if (_SDFIDUSE > 0)
@@ -452,7 +692,48 @@ Shader "Unlit/pbr"
 
              finRampColorface = rampColorface + rampColor2face;
 
-             diffuseface = (finRampColorface * baseColor * mainLight.color + ambient) / PI;
+             // BRDF计算 ------------------------------
+                // 法线分布
+                float D = D_GGX(NoH, Roughness);
+                // 几何遮蔽
+                float G = G_Smith(NoV, NoL, Roughness);
+                
+                // 菲涅尔项
+                float3 F = F_Schlick(VoH, F0);
+
+
+                // 镜面反射项
+                //float3 specular = (D * G * F) / max(4.0 * NoV * finRampColor, EPSILON);
+
+                // 漫反射项
+                float3 kD = max((1.0 - F),0.1) * (1.0 - Metallic);
+                float3 diffusePBR = kD * baseColor / PI;
+
+                // 光照组合
+               // float3 radiance = mainLight.color * mainLight.distanceAttenuation;
+                //float3 directLight = (diffusePBR + specular) * radiance * finRampColor;
+
+                // 环境光照 ------------------------------
+                // 漫反射环境
+                float3 ambientDiffuse = SampleSH(N) * baseColor * kD;
+                
+                // 镜面反射环境
+                float3 R = reflect(-V, N);
+                float3 prefilteredColor = GlossyEnvironmentReflection(
+                    R,
+                    Roughness * Roughness,
+                    0.0
+                );
+                float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
+                
+                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.1;
+
+                 // 最终颜色
+                float3 finalColorPBR = directLight + ambientPBR;
+
+
+             diffuseface = (finRampColorface * kD * baseColor * mainLight.color + ambientPBR) / PI;
+             //diffuse = (finRampColor * kD * baseColor * mainLight.color + ambientPBR) * ao / PI;
 
         }
         else
@@ -484,11 +765,11 @@ Shader "Unlit/pbr"
             //float3 rampColor = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, rampUV).rgb;
 
             //float3 directDiffuse = brdfData.diffuse * mainLight.color * finRampColor / PI;
-            float3 directSpecular = DirectBRDF(brdfData, pixelNormalWS, -lightDirWS, input.viewDirWS) * mainLight.color * saturate(dot(pixelNormalWS, lightDirWS));
+            //float3 directSpecular = DirectBRDF(brdfData, pixelNormalWS, -lightDirWS, input.viewDirWS) * mainLight.color * saturate(dot(pixelNormalWS, lightDirWS));
 
             //float3 ambient = UNITY_LIGHTMODEL_AMBIENT.rgb * baseColor;
             //float3 diffuse = directDiffuse + ambient;
-            float3 specular = directSpecular;
+            //float3 specular = directSpecular;
 
 
 
@@ -498,9 +779,14 @@ Shader "Unlit/pbr"
 
 
             //float3 diffuse = baseColor * NoL * lightColor;
+            float3 MetallicColor = Metallic * _MetallicColor;
+            
             
 
-            return float4(diffuse + diffuseface,baseAlpha);
+            return float4(diffuse + diffuseface + EmissionColor + edgeGlow + specularmetllic + SpecularphongColor + (specular * mainLight.color),baseAlpha);
+
+            //return float4(DirectLight, baseAlpha);//test
+            //return float4(shadowAttenuation.xxx, baseAlpha);
         }
 
         ENDHLSL
