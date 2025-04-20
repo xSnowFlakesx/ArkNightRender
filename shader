@@ -18,7 +18,7 @@ Shader "Unlit/pbr"
         _OcclusionIntensity("Occlusion Intensity", Range(0,1)) = 0
         _MetallicIntensity("Metallic Intensity", Range(0,1)) = 0
         _MetallicColor("Metallic Color",Color) = (0,0,0,1)
-        _RoughnessIntensity("Roughness Intensity", Range(0,1)) = 0
+        _RoughnessIntensity("Roughness Intensity", Range(0,5)) = 0
         _SmoothnessIntensity("Smoothness Intensity", Range(0,1)) = 0
         _SpecularTintIntensity("Specular Tint Intensity", Range(0,1)) = 0
         _ShadowIntensity("Shadow Intensity", Range(0,1)) = 0
@@ -31,6 +31,19 @@ Shader "Unlit/pbr"
         _FresnelPower("Fresnel Power", Range(0, 10)) = 5.0   // 控制边缘宽度
         _FresnelScale("Fresnel Scale", Range(0, 1)) = 0.5    // 控制强度
         _EdgeColor("Edge Color", Color) = (1, 0.5, 0, 1)     // 边缘光颜色
+
+         _ThicknessMap("Thickness Map", 2D) = "white" {}
+        _ThicknessColor("Thickness Color", Color) = (0.8,0.5,0.4,1) // 模拟皮下血管颜色
+        _ThicknessPower("Thickness Power", Range(0,5)) = 2.0
+        _DepthContrast("Depth Contrast", Range(0,5)) = 1.5
+
+        _GGXHair("GGX Hair", Range(0,1)) = 0
+        _Anisotropy("Anisotropy", Range(-1, 1)) = 0
+        _Specular("Specular", Range(0,1)) = 0.5
+        _specularGGXintensity("GGX Specular Intensity", Range(0,100)) = 50
+        _AnisoDirectionMap("Anisotropy Direction Map", 2D) = "white" {}
+        _AnisoDirectionMap_ST("AnisoDirectionMap_ST", Range(-50,50)) = 0
+        _MetallicIntensityGGX("GGX Metallic Intensity", Range(0,1)) = 0
 
         _SpecularPowerValue("_Specular Power Value",Range(0,50)) = 10
         _SpecularScaleValue("_SpecularS cale Value",Range(0,10)) = 1
@@ -51,6 +64,7 @@ Shader "Unlit/pbr"
         //_Metallic("Metallic", Range(0,1)) = 0
         //_Smoothness("Smoothness", Range(0,1)) = 0.5
         _SpecularTint("Specular Tint", Color) = (1,1,1,1)
+
         _EmissionColor("Emission color", Color) = (0,0,0,0)
         _EmissionIntensity("Emission Intensity", Range(0,10)) = 1
         //_EmissionIntensity("Emission Intensity", Range(0,1)) = 0
@@ -169,6 +183,35 @@ Shader "Unlit/pbr"
             return F0 + (max(1.0 - Roughness, F0) - F0) * pow(1.0 - cosTheta, 5.0);
         }
 
+
+        float AnisoGGXDistribution(float NoH, float HdotX, float HdotY, float Roughness, float anisotropy) {
+            float aspect = sqrt(1.0 - anisotropy * 0.9);
+            float ax = Roughness * Roughness / aspect;
+            float ay = Roughness * Roughness * aspect;
+            return 1.0 / (PI * ax * ay * pow((HdotX*HdotX/(ax*ax) + HdotY*HdotY/(ay*ay) + NoH*NoH), 2.0));
+        }
+
+
+
+        // 各向异性GGX分布函数
+            float D_GGXAniso(float ax, float ay, float NoH, float3 H, float3 X, float3 Y)
+            {
+                float XoH = dot(X, H);
+                float YoH = dot(Y, H);
+                float d = XoH * XoH / (ax * ax) + YoH * YoH / (ay * ay) + NoH * NoH;
+                return 1.0 / (PI * ax * ay * d * d);
+            }
+
+            // Smith各向异性可见性项
+            float V_SmithGGXCorrelatedAniso(float at, float ab, float ToV, float BoV, float ToL, float BoL, float NoV, float NoL)
+            {
+                float lambdaV = NoL * length(float3(at * ToV, ab * BoV, NoV));
+                float lambdaL = NoV * length(float3(at * ToL, ab * BoL, NoL));
+                return 0.5 / (lambdaV + lambdaL);
+            }
+
+        
+
         CBUFFER_START(UnityPerMaterial)
 
             //sampler2D _BaseColorTex;
@@ -179,6 +222,13 @@ Shader "Unlit/pbr"
 
             sampler2D _SDFTex;
             //SAMPLER(sampler_SDFTex);
+
+            TEXTURE2D(_ThicknessMap);
+            SAMPLER(sampler_ThicknessMap);
+
+            half4 _ThicknessColor;
+                float _ThicknessPower;
+                float _DepthContrast;
             
             TEXTURE2D(_BaseColorTex);
             //TEXTURE2D(_NormalTex);
@@ -213,6 +263,14 @@ Shader "Unlit/pbr"
             float _SpecularScaleValue;
             float _SpecularphongIntensity;
             float3 _SpecularphongIntensitytint;
+            
+            float GGXHair;
+            float _Anisotropy;
+            sampler2D _AnisoDirectionMap;
+            float _specularGGXintensity;
+            float _AnisoDirectionMap_ST;
+            float _Specular;
+            float _MetallicIntensityGGX;
 
             
             //SAMPLER(sampler_LinearRepeat);
@@ -228,7 +286,7 @@ Shader "Unlit/pbr"
             //float4 _ILMTex;
             //float _Roughness;
             //float _Smoothness;
-            float _SpecularTint;
+            float4 _SpecularTint;
             //float _Metallic;
             float4 _EmissionColor;
             float _EmissionIntensity;
@@ -371,6 +429,8 @@ Shader "Unlit/pbr"
                 BRDFData brdfData; // ✅ 正确声明
                 InitializeBRDFData(surfaceData, brdfData);
 
+                //BRDFData brdf = DirectBDRF_Aniso(pbrInput, surfaceData, light, anisotropy);
+
 
             float3 positionWS = input.positionWSAndFogFactor.xyz;
 
@@ -384,17 +444,30 @@ Shader "Unlit/pbr"
             float3 L = lightDirectionWSFloat3;
             float3 H = halfDirWS;
 
+            float3 T = normalize(input.tangentWS);
+            float3 B = normalize(input.bitangentWS);
+
             float NoL = saturate(dot(N, L));
             float NoV = saturate(dot(N, V));
             float NoH = saturate(dot(N, H));
             float VoH = saturate(dot(V, H));
+
+            float ToH = dot(T, H);
+                float BoH = dot(B, H);
+                float ToV = dot(T, V);
+                float BoV = dot(B, V);
+                float ToL = dot(T, L);
+                float BoL = dot(B, L);
+
 
             float materialid = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y;
                
 
             float Roughness = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).a * _RoughnessIntensity;
              Roughness = max(Roughness, 0.001);
-             float Metallic = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y * SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensity;
+             float Metallic = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensity;
+
+             
 
              float3 F0 = lerp(float3(0.04,0.04,0.04), baseColor, Metallic);
 
@@ -429,11 +502,11 @@ Shader "Unlit/pbr"
                 float3 prefilteredColor = GlossyEnvironmentReflection(
                     R,
                     Roughness * Roughness,
-                    0.0
+                    1.0
                 );
                 float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
                 
-                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.1;
+                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 1;
 
                  // 最终颜色
                 float3 finalColorPBR = directLight + ambientPBR;
@@ -582,11 +655,11 @@ Shader "Unlit/pbr"
                 float3 prefilteredColor = GlossyEnvironmentReflection(
                     R,
                     Roughness * Roughness,
-                    0.0
+                    0.5
                 );
                 float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
                 
-                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.3;
+                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.5;
 
                  // 最终颜色
                 float3 finalColorPBR = directLight + ambientPBR;
@@ -680,7 +753,7 @@ Shader "Unlit/pbr"
     (1 - shadowMaskface) + _ShadowSmoothness, 
     sdfFace
 );
-            shadowface = smoothstep(0.1, 1.0, shadowface);
+            shadowface = smoothstep(0.0, 1.0, shadowface);
             
             rampColor2face = lerp(rampColor2face, float3(1,1,1), 0.7);
             rampColor2face *= shadowface * 0.6;
@@ -722,7 +795,7 @@ Shader "Unlit/pbr"
                 float3 prefilteredColor = GlossyEnvironmentReflection(
                     R,
                     Roughness * Roughness,
-                    0.0
+                    0.1
                 );
                 float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
                 
@@ -771,6 +844,12 @@ Shader "Unlit/pbr"
             //float3 diffuse = directDiffuse + ambient;
             //float3 specular = directSpecular;
 
+            // if (_GGXHair == 1)
+            // {
+            
+
+            // }
+
 
 
             //float NoL = saturate(dot(pixelNormalWS, lightDirWS));
@@ -778,15 +857,77 @@ Shader "Unlit/pbr"
             //float3 diffuse = baseColor * HalfLambert * lightColor;
 
 
-            //float3 diffuse = baseColor * NoL * lightColor;
-            float3 MetallicColor = Metallic * _MetallicColor;
-            
-            
+            // // 在片元着色器中计算各向异性高光
+            // float HdotX = dot(H, input.tangentWS);
+            // float HdotY = dot(H, input.bitangentWS);
+            // float anisotropy = _Anisotropy;
 
-            return float4(diffuse + diffuseface + EmissionColor + edgeGlow + specularmetllic + SpecularphongColor + (specular * mainLight.color),baseAlpha);
+             float4 AnisoDirectionMap = tex2D(_AnisoDirectionMap, input.uv * _AnisoDirectionMap_ST);
+            // float3 noise = AnisoDirectionMap;
+
+            
+            // float D1 = AnisoGGXDistribution(NoH, HdotX, HdotY, Roughness, anisotropy);
+
+            // // 结合到BRDF中
+            // float3 specularGGX = D1 * F * G / (4.0 * NoL * NoV);
+
+            float aspect = sqrt(1.0 - 0.9 * abs(_Anisotropy));
+                float ax = max(0.001, Roughness * Roughness / aspect);
+                float ay = max(0.001, Roughness * Roughness * aspect);
+
+                 // 计算D项
+                float D1 = D_GGXAniso(ax, ay, NoH, H, T, B);
+                
+                // 计算G项
+                float G1 = V_SmithGGXCorrelatedAniso(ax, ay, ToV, BoV, ToL, BoL, NoV, NoL);
+
+                // 计算F项（Schlick近似）
+                float3 F0_GGX = lerp(0.08 * _Specular.xxx, baseColor.rgb, _SpecularTint);
+                float3 F_GGX = F0_GGX + (1.0 - F0_GGX) * pow(1.0 - saturate(dot(H, V)), 5.0);
+
+                // 组合BRDF
+                float3 specularGGX = (D1 * G1* F_GGX) * 0.25;
+
+                float MetallicGGX = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensityGGX;
+
+                specularGGX *= 1-MetallicGGX;
+
+                specularGGX *= _specularGGXintensity;
+                
+                specularGGX *= AnisoDirectionMap;
+
+
+                specularGGX = specularGGX * _SpecularTint * _SpecularTintIntensity;
+
+
+
+
+            //float3 diffuse = baseColor * NoL * lightColor;
+             baseAlpha = SAMPLE_TEXTURE2D(_BaseColorTex, sampler_LinearRepeat, input.uv).a;
+
+            float3 MetallicColor = Metallic * _MetallicColor;
+
+            float3 color = diffuse + diffuseface + EmissionColor + edgeGlow + specularmetllic + SpecularphongColor + specularGGX + (specular * mainLight.color);
+            
+            //color = saturate(color);
+            //color = min(color, 0.7);
+
+            // 厚度贴图采样（反转处理：厚区域值更高）
+                half thickness = SAMPLE_TEXTURE2D(_ThicknessMap, sampler_ThicknessMap, input.uv).r;
+                thickness = pow(thickness * _DepthContrast, _ThicknessPower);
+                // 颜色混合：在厚区域叠加预设颜色
+                half3 finalColorsss = lerp(baseColor.rgb, _ThicknessColor.rgb, thickness);
+
+                color = lerp(color, finalColorsss, 0.5);
+
+                color = saturate(color);
+
+                
+
+            return float4 (color, baseAlpha);
 
             //return float4(DirectLight, baseAlpha);//test
-            //return float4(shadowAttenuation.xxx, baseAlpha);
+            //return float4(specularGGX, baseAlpha);
         }
 
         ENDHLSL
