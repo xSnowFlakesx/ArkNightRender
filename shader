@@ -6,28 +6,19 @@ Shader "Unlit/pbr"
         _Color("Color", Color) = (1,1,1,1)
         _NormalTex("Normal Tex", 2D) = "bump" {}
         _BumpScale("Bump Scale", Range(-5,5)) = 1
-        _ILMTex("ILM Tex", 2D) = "white" {}
+        
         _SDFTex("SDF Tex", 2D) = "white" {}
-        _RampTex ("Ramp Texture", 2D) = "white" {}
-        _RampTex2 ("Ramp Texture2", 2D) = "white" {}
-        _ShadowThreshold ("Shadow Threshold", Range(0,1)) = 0.5
-        _ShadowSmoothness ("Shadow Smoothness", Range(0,1)) = 0.1
-        _RampThreshold ("Ramp Threshold", Range(0,1)) = 0.5
         _MaterialIDUSE("Material ID USE", Range(0,4)) = 0
         _SDFIDUSE("SDF ID USE", Range(0,4)) = 0
-        _OcclusionIntensity("Occlusion Intensity", Range(0,1)) = 0
-        _MetallicIntensity("Metallic Intensity", Range(0,1)) = 0
-        _MetallicColor("Metallic Color",Color) = (0,0,0,1)
+        _RampTex("Ramp Tex", 2D) = "white" {}
+        _RampTex2("Ramp Tex2", 2D) = "white" {}
         _RoughnessIntensity("Roughness Intensity", Range(0,5)) = 0
         _SmoothnessIntensity("Smoothness Intensity", Range(0,1)) = 0
         _SpecularTintIntensity("Specular Tint Intensity", Range(0,1)) = 0
-        _ShadowIntensity("Shadow Intensity", Range(0,1)) = 0
-        _ShaodwColor("Shadow Color", Color) = (0,0,0,1)
         _SHIntensity("SH Intensity", Range(0,1)) = 0
         _aoUsage("AO Usage", Range(0,1)) = 0
         _AmbientIntensity("Ambient Intensity", Range(0,1)) = 0
         _Ambientpower("Ambient Power", Range(0,1)) = 0
-        _EmissionMask("Emission Mask", 2D) = "white" {}
         _FresnelPower("Fresnel Power", Range(0, 10)) = 5.0   // 控制边缘宽度
         _FresnelScale("Fresnel Scale", Range(0, 1)) = 0.5    // 控制强度
         _EdgeColor("Edge Color", Color) = (1, 0.5, 0, 1)     // 边缘光颜色
@@ -36,19 +27,12 @@ Shader "Unlit/pbr"
         _ThicknessColor("Thickness Color", Color) = (0.8,0.5,0.4,1) // 模拟皮下血管颜色
         _ThicknessPower("Thickness Power", Range(0,5)) = 2.0
         _DepthContrast("Depth Contrast", Range(0,5)) = 1.5
+        _NoseColor("Nose Color", Color) = (1,0.5,0.4,1) // 鼻子高光颜色
+        _NoseIntensity("Nose Intensity", Range(0,10)) = 1
+        _MouthTex("Mouth Mask", 2D) = "white" {}
+        _Gloss("Gloss", Range(0,1)) = 0.5
 
-        _GGXHair("GGX Hair", Range(0,1)) = 0
-        _Anisotropy("Anisotropy", Range(-1, 1)) = 0
-        _Specular("Specular", Range(0,1)) = 0.5
-        _specularGGXintensity("GGX Specular Intensity", Range(0,100)) = 50
-        _AnisoDirectionMap("Anisotropy Direction Map", 2D) = "white" {}
-        _AnisoDirectionMap_ST("AnisoDirectionMap_ST", Range(-50,50)) = 0
-        _MetallicIntensityGGX("GGX Metallic Intensity", Range(0,1)) = 0
-
-        _SpecularPowerValue("_Specular Power Value",Range(0,50)) = 10
-        _SpecularScaleValue("_SpecularS cale Value",Range(0,10)) = 1
-        _SpecularphongIntensity("Specular phong Intensity",Range(0,50)) = 5
-        _SpecularphongIntensitytint("Specular phong Intensitytint",Color) = (0,0,0,1)
+        _LutTex("Lut Tex", 2D) = "white" {}
 
 
 
@@ -56,17 +40,11 @@ Shader "Unlit/pbr"
         [HideInInspector]_HeadForward("Head Forward", Vector) = (0,0,0)
         [HideInInspector]_HeadRight("Head Right", Vector) = (0,0,0)
 
-        _FaceshadowOffset("Face shadow Offset", Range(0,1)) = 0.1
+        _FaceshadowOffset("Face shadow Offset", Range(-1,1)) = 0.1
         _TransitionWidth("Transition Width", Range(0,1)) = 0.05
         //_EmissionIntensity("Emission Intensity", Range(0,1)) = 0
 
-        //_Roughness("Roughness", Range(0,1)) = 0
-        //_Metallic("Metallic", Range(0,1)) = 0
-        //_Smoothness("Smoothness", Range(0,1)) = 0.5
         _SpecularTint("Specular Tint", Color) = (1,1,1,1)
-
-        _EmissionColor("Emission color", Color) = (0,0,0,0)
-        _EmissionIntensity("Emission Intensity", Range(0,10)) = 1
         //_EmissionIntensity("Emission Intensity", Range(0,1)) = 0
         _AlphaClip("Alpha Clip", Range(0,1)) = 0.333
         _OutLineWidth("Outline Width", Range(0,1)) = 0.01
@@ -133,84 +111,14 @@ Shader "Unlit/pbr"
         //#define PI 3.141592654
         #define Eplison 0.001
         #define EPSILON 1e-5
-
+#define LUT_WIDTH  1024
+#define LUT_HEIGHT 32
+#define LUT_DEPTH  32   // B 通道分层数
+#define R_SEGMENTS 32   // R 分段数
+#define G_SEGMENTS 32   // 每个 R 分段内的 G 值数
         #define kDielectricSpec half4(0.04, 0.04, 0.04, 1.0 - 0.04) // standard dielectric reflectivity coef at incident angle (= 4%)
         
-        float3 CalculateAmbientLighting(
-        BRDFData brdfData, 
-        float3 normalWS, 
-        float3 viewDirectionWS, 
-        float occlusion
-    ) {
-        // 1. 漫反射环境光（球谐函数）
-        float3 indirectDiffuse = SampleSH(normalWS) * brdfData.diffuse * occlusion;
 
-        // 2. 镜面反射环境光（基于反射探针或环境贴图）
-        float3 reflectVector = reflect(-viewDirectionWS, normalWS);
-        float3 indirectSpecular = GlossyEnvironmentReflection(
-            reflectVector,
-            brdfData.perceptualRoughness,
-            occlusion
-        );
-
-        //D
-            
-
-    return indirectDiffuse + indirectSpecular;
-}
-// Schlick-GGX几何遮蔽
-        float G_SchlickGGX(float NoV, float k)
-        {
-            return NoV / (NoV * (1.0 - k) + k);
-        }
-
-// Smith联合几何遮蔽
-        float G_Smith(float NoV, float NoL, float Roughness)
-        {
-            float k = (Roughness + 1.0) * (Roughness + 1.0) / 8.0;
-            return G_SchlickGGX(NoL, k) * G_SchlickGGX(NoV, k);
-        }
-
-        // Schlick菲涅尔近似
-        float3 F_Schlick(float cosTheta, float3 F0)
-        {
-            return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
-        }
-
-        // 能量守恒版本菲涅尔
-        float3 F_SchlickRoughness(float cosTheta, float3 F0, float Roughness)
-        {
-            return F0 + (max(1.0 - Roughness, F0) - F0) * pow(1.0 - cosTheta, 5.0);
-        }
-
-
-        float AnisoGGXDistribution(float NoH, float HdotX, float HdotY, float Roughness, float anisotropy) {
-            float aspect = sqrt(1.0 - anisotropy * 0.9);
-            float ax = Roughness * Roughness / aspect;
-            float ay = Roughness * Roughness * aspect;
-            return 1.0 / (PI * ax * ay * pow((HdotX*HdotX/(ax*ax) + HdotY*HdotY/(ay*ay) + NoH*NoH), 2.0));
-        }
-
-
-
-        // 各向异性GGX分布函数
-            float D_GGXAniso(float ax, float ay, float NoH, float3 H, float3 X, float3 Y)
-            {
-                float XoH = dot(X, H);
-                float YoH = dot(Y, H);
-                float d = XoH * XoH / (ax * ax) + YoH * YoH / (ay * ay) + NoH * NoH;
-                return 1.0 / (PI * ax * ay * d * d);
-            }
-
-            // Smith各向异性可见性项
-            float V_SmithGGXCorrelatedAniso(float at, float ab, float ToV, float BoV, float ToL, float BoL, float NoV, float NoL)
-            {
-                float lambdaV = NoL * length(float3(at * ToV, ab * BoV, NoV));
-                float lambdaL = NoV * length(float3(at * ToL, ab * BoL, NoL));
-                return 0.5 / (lambdaV + lambdaL);
-            }
-
-        
 
         CBUFFER_START(UnityPerMaterial)
 
@@ -231,22 +139,19 @@ Shader "Unlit/pbr"
                 float _DepthContrast;
             
             TEXTURE2D(_BaseColorTex);
+            sampler2D _RampTex;
+            sampler2D _RampTex2;
+            sampler2D _MouthTex;
+
+            TEXTURE2D (_LutTex);
+            SAMPLER (linear_clamp_sampler);
             //TEXTURE2D(_NormalTex);
             //TEXTURE2D(_OcclusionTex);
-            TEXTURE2D(_ILMTex);
-            SAMPLER(sampler_ILMTex);
-            TEXTURE2D( _RampTex);
-            SAMPLER(sampler_RampTex);
-            TEXTURE2D( _RampTex2);
-            SAMPLER(sampler_RampTex2);
-            sampler2D _EmissionMask;
-            float4 _MetallicColor;
+            //float4 _MetallicColor;
             //float4 _Color;
-            float _RampThreshold;
-            float _ShadowThreshold;
-            float _ShadowSmoothness;
-            float _ShadowIntensity;
-            float4 _ShaodwColor;
+            // float _ShadowThreshold;
+            // float _ShadowSmoothness;
+            //float _ShadowIntensity;
             float _SHIntensity;
             float _aoUsage;
             float _AmbientIntensity;
@@ -256,28 +161,18 @@ Shader "Unlit/pbr"
             float3 _HeadRight;
             float _FaceshadowOffset;
             float _TransitionWidth;
-            float _FresnelPower;
+            float3 _EdgeColor;
             float _FresnelScale;
-            float4 _EdgeColor;
-            float _SpecularPowerValue;
-            float _SpecularScaleValue;
-            float _SpecularphongIntensity;
-            float3 _SpecularphongIntensitytint;
+            float4 _NoseColor;
+            float _NoseIntensity;
+            float _Gloss;
             
-            float GGXHair;
-            float _Anisotropy;
-            sampler2D _AnisoDirectionMap;
-            float _specularGGXintensity;
-            float _AnisoDirectionMap_ST;
-            float _Specular;
-            float _MetallicIntensityGGX;
 
             
             //SAMPLER(sampler_LinearRepeat);
             
             //sampler2D _OcclusionTex;
             float _BumpScale;
-            float _OcclusionIntensity;
             float _MetallicIntensity;
             float _RoughnessIntensity;
             float _SmoothnessIntensity;
@@ -288,13 +183,126 @@ Shader "Unlit/pbr"
             //float _Smoothness;
             float4 _SpecularTint;
             //float _Metallic;
-            float4 _EmissionColor;
-            float _EmissionIntensity;
             float _AlphaClip;
             float _MaterialIDUSE;
             float _SDFIDUSE;
+            float _FresnelPower;
 
         CBUFFER_END
+
+        // --- LUT 采样函数 ---
+float3 ApplySkinLUT(float3 originalColor)
+{
+    // 将颜色限制在 [0, 1] 范围
+    float3 color = saturate(originalColor);
+    
+    // --- 计算 B 通道索引（决定行）---
+    float g = color.g * (LUT_DEPTH - 1);
+    int bIndex = (int)floor(g);
+    bIndex = clamp(bIndex, 0, LUT_DEPTH - 1); // 确保不越界
+    
+    // --- 计算 R 通道索引（决定横向分段）---
+    float b = color.b * (R_SEGMENTS - 1);
+    int rIndex = (int)floor(b);
+    rIndex = clamp(rIndex, 0, R_SEGMENTS - 1);
+    
+    // --- 计算 G 通道索引（决定分段内位置）---
+    float r = color.r * (G_SEGMENTS - 1);
+    int gIndex = (int)floor(r);
+    gIndex = clamp(gIndex, 0, G_SEGMENTS - 1);
+    
+    // --- 计算 UV 坐标 ---
+    // U轴：R分段起始位置 + G偏移 → 转换为 [0,1]
+    float u = (rIndex * G_SEGMENTS + gIndex + 0.5) / LUT_WIDTH;
+    // V轴：B行位置 → 转换为 [0,1]
+    float v = (bIndex + 0.5) / LUT_HEIGHT;
+    
+    return SAMPLE_TEXTURE2D(_LutTex,linear_clamp_sampler, float2(u,v)).rgb;
+}
+
+
+        // UE5改进的各向异性分布函数
+            float D_GGXAnisoUE5(float at, float ab, float ToH, float BoH, float NoH)
+            {
+                float ToH2 = ToH * ToH;
+                float BoH2 = BoH * BoH;
+                float NoH2 = NoH * NoH;
+                float denominator = ToH2/(at*at) + BoH2/(ab*ab) + NoH2;
+                denominator = PI * at * ab * (denominator * denominator);
+                return 1.0 / denominator;
+            }
+
+            // UE5改进的几何项
+            float V_SmithGGXCorrelatedAnisoUE5(float at, float ab, float ToV, float BoV, float ToL, float BoL, float NoV, float NoL)
+            {
+                float lambdaV = NoL * sqrt(NoV * (NoV - NoV * at) + at);
+                float lambdaL = NoV * sqrt(NoL * (NoL - NoL * ab) + ab);
+                return 0.5 / (lambdaV + lambdaL);
+            }
+
+           // 修改旋转函数
+float2 RotateAnisotropy(float2 dir, float rotation)
+{
+    float angle = rotation * 2.0 * PI;
+    float sinRot, cosRot;
+    sincos(angle, sinRot, cosRot);
+    return float2(
+        dir.x * cosRot - dir.y * sinRot,
+        dir.x * sinRot + dir.y * cosRot
+    );
+}
+
+float3 CalculateSSR(float3 reflection, float3 positionWS, float roughness)
+{
+    #if defined(_SSR_ENABLED)
+    // 修正1：使用正确的屏幕UV计算
+    float2 screenUV = (input.screenPos.xy / input.screenPos.w);
+    #if UNITY_UV_STARTS_AT_TOP
+    screenUV.y = 1.0 - screenUV.y;
+    #endif
+    
+    // 修正2：使用URP内置深度采样方法
+    float rawDepth = SampleSceneDepth(screenUV);
+    float3 rayStart = GetCameraPositionWS();
+    float3 rayDir = normalize(reflection);
+    
+    // 修正3：调整步进参数
+    const int steps = 32; // 增加步数
+    const float stepSize = 0.2; // 增大步长
+    const float thickness = 0.1; // 增加厚度容差
+    
+    for(int i=1; i<=steps; i++)
+    {
+        float3 rayEnd = positionWS + rayDir * i * stepSize;
+        float4 projEnd = TransformWorldToHClip(rayEnd);
+        float2 uvEnd = projEnd.xy / projEnd.w * 0.5 + 0.5;
+        
+        // 处理平台差异
+        #if UNITY_UV_STARTS_AT_TOP
+        uvEnd.y = 1.0 - uvEnd.y;
+        #endif
+        
+        // 跳过屏幕外坐标
+        if(uvEnd.x < 0 || uvEnd.x > 1 || uvEnd.y < 0 || uvEnd.y > 1) 
+            continue;
+        
+        float sceneDepth = SampleSceneDepth(uvEnd);
+        float3 scenePos = ComputeWorldSpacePosition(uvEnd, sceneDepth, UNITY_MATRIX_I_VP);
+        
+        // 使用距离+法线双重检测
+        float surfaceDiff = distance(rayEnd, scenePos);
+        float3 sceneNormal = SampleSceneNormals(uvEnd);
+        float normalCheck = saturate(dot(sceneNormal, -rayDir));
+        
+        if(surfaceDiff < stepSize * thickness && normalCheck > 0.3)
+        {
+            // 使用Mipmap优化采样
+            return SAMPLE_TEXTURE2D_LOD(_CameraOpaqueTexture, sampler_CameraOpaqueTexture, uvEnd, roughness * 8).rgb;
+        }
+    }
+    #endif
+    return 0;
+}
 
         
 
@@ -312,15 +320,15 @@ Shader "Unlit/pbr"
         struct UniversalVaryings
         {
             float2 uv                      : TEXCOORD0;
-            float4 positionWSAndFogFactor  : TEXCOORD1;
+            float4 positionWSAndFogFactor  : TEXCOORD1; // Stores world-space position (xyz) and fog factor (w)
             float3 normalWS                : TEXCOORD2;
             float4 tangentWS               : TEXCOORD3;
             float3 bitangentWS             : TEXCOORD4;
-            float3 viewDirWS                : TEXCOORD5;
+            float3 viewDirWS               : TEXCOORD5;
             float4 positionCS              : SV_POSITION;
             float3 SH                      : TEXCOORD6;  
-            float3 positionWS : TEXCOORD7;       
-            float4 shadowCoord : TEXCOORD8; // 新增阴影坐标     
+            float3 positionWS              : TEXCOORD7;       
+            float4 shadowCoord             : TEXCOORD8; // New shadow coordinates
         };
 
         UniversalVaryings MainVS(UniversalAttributes input)
@@ -363,28 +371,6 @@ Shader "Unlit/pbr"
             float3 normalWS = normalize(input.normalWS); 
             
             float3 pixelNormalWS = normalWS;
-            if (_MaterialIDUSE == 0)
-                {
-                    // 使用自身法线
-                    pixelNormalWS = normalWS;
-                }
-                else
-                {
-                    // 使用法线贴图
-
-                // float4 lightData = SAMPLE_TEXTURE2D(_NormalTex,sampler_NormalTex, input.uv);
-                // lightData = lightData * 2 - 1;
-                // //diffuseBias = lightData.z * 2;
-
-                // float sgn = input.tangentWS.w;
-                // float3 tangentWS = normalize(input.tangentWS.xyz);
-                // float3 bitangentWS = cross(normalWS, tangentWS) * sgn;
-
-                // float3 pixelNormalTS = float3(lightData.xy,0.0);
-                // pixelNormalTS.xy *= _BumpScale;
-                // pixelNormalTS.z = sqrt(1.0 - min(0.0, dot(pixelNormalTS.xy, pixelNormalTS.xy)));
-                // pixelNormalWS = TransformTangentToWorld(pixelNormalTS,float3x3(tangentWS,bitangentWS,normalWS));
-                // pixelNormalWS = normalize(pixelNormalWS);
 
                 // 采样法线贴图
     half4 packedNormal = SAMPLE_TEXTURE2D(_NormalTex, sampler_NormalTex, input.uv);
@@ -401,35 +387,7 @@ Shader "Unlit/pbr"
     
     // 将法线转换到世界空间
      pixelNormalWS = normalize(mul(pixelNormalTS, TBN));
-            }
 
-                //float3 baseColor = mainTex.rgb * _Color.rgb;
-                 // 3. 定义 SurfaceData
-                 SurfaceData surfaceData = (SurfaceData)0;
-                surfaceData.albedo = baseColor;
-                surfaceData.metallic = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensity;
-                surfaceData.specular = kDielectricSpec.rgb;
-                surfaceData.smoothness =  1 - SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y * _RoughnessIntensity;
-                surfaceData.occlusion = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).z * _OcclusionIntensity;
-                surfaceData.alpha = baseAlpha;
-                surfaceData.emission = _EmissionColor.rgb * _EmissionIntensity;
-                surfaceData.clearCoatMask = 0.0;
-                surfaceData.clearCoatSmoothness = 0.0;
-
-                // URP 12+ 兼容
-                #if defined(UNIVERSAL_PIPELINE_12_OR_NEWER)
-                    surfaceData.diffuseAlpha = 1.0;
-                #endif
-
-                // URP 14+ 兼容
-                #if defined(UNIVERSAL_PIPELINE_14_OR_NEWER)
-                    surfaceData.geomNormalWS = input.normalWS;
-                #endif
-
-                BRDFData brdfData; // ✅ 正确声明
-                InitializeBRDFData(surfaceData, brdfData);
-
-                //BRDFData brdf = DirectBDRF_Aniso(pbrInput, surfaceData, light, anisotropy);
 
 
             float3 positionWS = input.positionWSAndFogFactor.xyz;
@@ -459,242 +417,82 @@ Shader "Unlit/pbr"
                 float ToL = dot(T, L);
                 float BoL = dot(B, L);
 
-
-            float materialid = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).y;
-               
-
-            float Roughness = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).a * _RoughnessIntensity;
-             Roughness = max(Roughness, 0.001);
-             float Metallic = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensity;
-
-             
-
-             float3 F0 = lerp(float3(0.04,0.04,0.04), baseColor, Metallic);
-
-            // BRDF计算 ------------------------------
-                // 法线分布
-                float D = D_GGX(NoH, Roughness);
-                // 几何遮蔽
-                float G = G_Smith(NoV, NoL, Roughness);
-                
-                // 菲涅尔项
-                float3 F = F_Schlick(VoH, F0);
-
-
-                // 镜面反射项
-                float3 specular = (D * G * F) / max(4.0 * NoV * NoL, EPSILON);
-                float3 specularmetllic = specular * Metallic;
-
-                // 漫反射项
-                float3 kD = max((1.0 - F),0.1) * (1.0 - Metallic);
-                float3 diffusePBR = kD * baseColor / PI;
-
-                // 光照组合
-                float3 radiance = mainLight.color * mainLight.distanceAttenuation;
-                float3 directLight = (diffusePBR + specular) * radiance * NoL;
-
-                // 环境光照 ------------------------------
-                // 漫反射环境
-                float3 ambientDiffuse = SampleSH(N) * baseColor * kD;
-                
-                // 镜面反射环境
-                float3 R = reflect(-V, N);
-                float3 prefilteredColor = GlossyEnvironmentReflection(
-                    R,
-                    Roughness * Roughness,
-                    1.0
-                );
-                float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
-                
-                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 1;
-
-                 // 最终颜色
-                float3 finalColorPBR = directLight + ambientPBR;
-
-
-            
-            //float NoH = saturate(dot(pixelNormalWS, halfDir));
-            //half LoH = half(saturate(dot(lightDirectionWSFloat3, halfDir)));
-            
-
             float3 lightColor = mainLight.color;
             float3 diffuse = 0;
 
 
              
-
-
-            float ao = surfaceData.occlusion;
          
             float3 ambient = input.SH.rgb * _Ambientpower;
-            ambient *= lerp(1, ao, _aoUsage);
+            //ambient *= lerp(1, ao, _aoUsage);
             ambient = lerp(ambient, baseColor, _AmbientIntensity);
-            //float3 Radiance = mainLight.color;
+            
+            
 
-
-            // float HV = max(dot(halfDirWS, V), 0);
-            //     float NV = max(dot(N, V), 0);
-            //     float NL = max(dot(N, L), 0);
-
-                
-                
-
-                
-
-                //float3 KS = F;
-                // float3 KD = 1 - KS;
-                // KD *= 1 - Metallic;
-                // float3 nominator = D * F * G;
-                // float denominator = max(4 * NV * NL, 0.001);
-                // float3 Specular = nominator / denominator;
-                // // Specular =max( Specular,0);
-
-                // //Diffuse
-                // // float3 Diffuse = KD * BaseColor / PI;
-                // float3 Diffuse = KD * baseColor; //没有除以 PI
-
-                // float3 DirectLight = (Diffuse + Specular) * NL * Radiance;
-
-            float EmissionMask = tex2D(_EmissionMask, input.uv);
-            float3 EmissionColor = _EmissionColor.rgb * _EmissionIntensity * EmissionMask;
-
-            // 菲涅尔计算
-                //float3 normalWS = normalize(input.normalWS);
-                //float3 viewDirWS = normalize(input.viewDirWS);
-                float fresnel = pow(1.0 - saturate(dot(pixelNormalWS, normalize(input.viewDirWS))), _FresnelPower);
-                fresnel = smoothstep(0.3,0.8,fresnel);
-                float3 edgeGlow = mainLight.color * _EdgeColor.rgb * fresnel * _FresnelScale * Roughness;
-                float3 edgeGlow2 = mainLight.color * _EdgeColor.rgb * fresnel * _FresnelScale;
-                edgeGlow += edgeGlow2;
-                edgeGlow *= lerp(baseColor,float3(1,1,1),0.9);
-                edgeGlow *= NoL;
-
-                float4 Specularphong = pow(NoH,_SpecularPowerValue)*_SpecularScaleValue * Metallic;
-                float SpecularphongIntensity = _SpecularphongIntensity;
-                float3 SpecularphongIntensitytint = _SpecularphongIntensitytint;
-                Specularphong = smoothstep(0.2,0.7,Specularphong);
-                float3 SpecularphongColor = Specularphong * baseColor *  SpecularphongIntensitytint * SpecularphongIntensity;
-
-//          Cloth
+//          body
             if (_SDFIDUSE == 0)
             {
             float  NoL = saturate(dot(pixelNormalWS, lightDirWS));
-            float stepNoL = smoothstep(0.0, 1, NoL);
-            float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
+            NoL = smoothstep(0.0, 1.0, NoL);
+            NoL = saturate(0.5 + 0.5 * NoL);
+            //float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
+
+            // 菲涅尔计算
+                //float3 normalWS = normalize(input.normalWS);
+                float3 viewDirWS = normalize(input.viewDirWS);
+                float fresnel = pow(1.0 - saturate(dot(pixelNormalWS, normalize(input.viewDirWS))), _FresnelPower);
+                fresnel = smoothstep(0.3,0.8,fresnel);
+                float3 edgeGlow = lightColor * _EdgeColor.rgb * fresnel * _FresnelScale ;
+                edgeGlow *= lerp(baseColor,float3(1,1,1),0.9);
+                edgeGlow *= NoL;
+
+
+            //float thickness = tex2D(_RampTex, input.uv).a; // 皮肤厚度图
+            float2 sssUV = float2(NoL * 0.3 + 0.5, 0.5); 
+            float3 sssColor = tex2D(_RampTex, sssUV).rgb; // 透光颜色（如红色）
+            sssColor = saturate(sssColor);
+            //finalColor += sssColor ;
+            float3 skinColor = ApplySkinLUT(baseColor);
+
+            baseColor = lerp(baseColor, skinColor, 0.5);
+                
+                
+                
+                float3 diffuse1 = baseColor / PI;
+
+                // 合并光照
+                float3 radiance = _MainLightColor.rgb * NoL;
+                float3 color = diffuse1 * sssColor * radiance;
+                float3 Lutcolor = ApplySkinLUT(color);
+                color = lerp(color, Lutcolor, 0.5);
+
+                
+
+                // 添加环境光照
+                float3 ambient = SampleSH(N) * baseColor.rgb;
+                
+
 
             
              
-            //HalfLambert = pow(HalfLambert, 2.0);
-
-
-            //float3 ambient = CalculateAmbientLighting(brdfData, pixelNormalWS, input.viewDirWS, surfaceData.occlusion);
-            //float HalfLambert = saturate(0.5 + 0.5 * stepNoL);
-
-
-            float shadowMask = smoothstep(
-            _ShadowThreshold - _ShadowSmoothness,
-            _ShadowThreshold + _ShadowSmoothness,
-            HalfLambert
-        );
-
-        //float  HalfLambertStep = smoothstep(0.2, 0.9, HalfLambert);
-            // 
-            float rampU = HalfLambert;
-            float rampV = _RampThreshold;
-            float3 rampColor = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, float2(rampU, rampV)).rgb;
-
-            float rampU2 = HalfLambert;
-            //float2 rampUV2 = float2(step(HalfLambert , (1 - shadowMask)), 0.5);
-            float rampV2 = _RampThreshold;
-            float3 rampColor2 = SAMPLE_TEXTURE2D(_RampTex2, sampler_LinearClamp, float2(rampU, rampV)).rgb;
-
-            float shadow = 1 - smoothstep(
-    (1 - shadowMask) - _ShadowSmoothness, 
-    (1 - shadowMask) + _ShadowSmoothness, 
-    HalfLambert
-);
-            shadow = smoothstep(0.1, 1.0, shadow);
-            
-            rampColor2 = lerp(rampColor2, float3(1,1,1), 0.7);
-            rampColor2 *= shadow * 0.6;
-            
-            //rampColor2 = step(rampColor2,shadowMask);
-
-
-            //half3 shadowColor = lerp(baseColor, baseColor * rampColor2, 1);
-
-            half3 finRampColor = rampColor + rampColor2;
-
-            // BRDF计算 ------------------------------
-                // 法线分布
-                float D = D_GGX(NoH, Roughness);
-                // 几何遮蔽
-                float G = G_Smith(NoV, NoL, Roughness);
-                
-                // 菲涅尔项
-                float3 F = F_Schlick(VoH, F0);
-
-
-                // 镜面反射项
-                float3 specular = (D * G * F) / max(4.0 * NoV * finRampColor, EPSILON);
-
-                // 漫反射项
-                float3 kD = max((1.0 - F),0.1) * (1.0 - Metallic);
-                float3 diffusePBR = kD * baseColor / PI;
-
-                // 光照组合
-                float3 radiance = mainLight.color * mainLight.distanceAttenuation;
-                float3 directLight = (diffusePBR + specular) * radiance * finRampColor;
-
-                // 环境光照 ------------------------------
-                // 漫反射环境
-                float3 ambientDiffuse = SampleSH(N) * baseColor * kD;
-                
-                // 镜面反射环境
-                float3 R = reflect(-V, N);
-                float3 prefilteredColor = GlossyEnvironmentReflection(
-                    R,
-                    Roughness * Roughness,
-                    0.5
-                );
-                float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
-                
-                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.5;
-
-                 // 最终颜色
-                float3 finalColorPBR = directLight + ambientPBR;
-
-            //finRampColor = saturate(0.5 + 0.5 * finRampColor);
-
-            
-
-
-
-            //half3 shadowColor = lerp(baseColor, baseColor * finRampColor, _ShadowIntensity) * _ShaodwColor.rgb;
-            //计算漫反射项
-            //half3 diffuse = lerp(shadowColor, baseColor, HalfLambertStep);//明部到阴影是在0.423到0.460之间过渡的
-            //diffuse = lerp(shadowColor, diffuse, );//将ILM贴图的g通道乘2 用saturate函数将超过1的部分去掉，混合常暗区域（AO）
-            //diffuse = lerp(diffuse, baseColor, 1);//将ILM贴图的g通道减0.5乘2 用saturate函数将小于0的部分去掉，混合常亮部分（眼睛）
-            //diffuse = diffuse + diffuse;
-   
-//diffuse = finalColorPBR;
+        
             float shadowAttenuation = mainLight.shadowAttenuation * MainLightRealtimeShadow(input.shadowCoord);
             shadowAttenuation = saturate(0.5 + 0.5 * shadowAttenuation);
 
-             diffuse = (finRampColor * kD * baseColor * mainLight.color + ambientPBR)  * shadowAttenuation * ao / PI;
+            diffuse =  color + ambient * shadowAttenuation + edgeGlow;
+            //diffuse = color;
             }
             else{
                 diffuse = 0;
             }
-            //diffuse = diffuse +  ambient;
             
-            //float3 sdf = SAMPLE_TEXTURE2D(_SDFTex, sampler_SDFTex, input.uv).rgb;
             float sdfThreshold = 0;
             float sdfVlaue = 0;
             float transitionWidth = 0;
             float sdfFace = 0;
             float3 finRampColorface = 0;
             float3 diffuseface = 0;
+            float FaceSSSTex = 0;
 
 //       Face
 
@@ -724,88 +522,125 @@ Shader "Unlit/pbr"
             float sdfVlaueG = sdfDate.g;
             float sdfVlaueB = sdfDate.b;
              sdfVlaue = saturate((sdfVlaueR + sdfVlaueG) * sdfVlaueB);
+             // GLSL/HLSL示例
+            float originalValue = sdfVlaueR;
+            float epsilon = 0.1; // 容差值
+            float modifiedValue = (abs(originalValue) < epsilon) ? 0.1 : originalValue;
+            //float modifiedValue = (originalValue == 0.0) ? 0.009 : originalValue;
+            sdfVlaue = modifiedValue;
+            
              sdfVlaue += _FaceshadowOffset;
             transitionWidth = _TransitionWidth;
+
              sdfFace = smoothstep(
                 sdfThreshold - transitionWidth, 
                 sdfThreshold + transitionWidth, 
-                sdfVlaue
-            );
+                sdfVlaue);
 
+            sdfFace += _FaceshadowOffset;
+            sdfFace = saturate(sdfFace);
 
-            float shadowMaskface = smoothstep(
-                _ShadowThreshold - _ShadowSmoothness,
-                _ShadowThreshold + _ShadowSmoothness,
-                sdfFace
-            );
+            //FaceSSSTex = SAMPLE_TEXTURE2D(_ThicknessMap, sampler_ThicknessMap, input.uv).r;
 
-            float rampUface = sdfFace;
-            float rampVface = _RampThreshold;
-            float3 rampColorface = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, float2(rampUface, rampVface)).rgb;
-
-            float rampU2face = sdfFace;
-            //float2 rampUV2 = float2(step(HalfLambert , (1 - shadowMask)), 0.5);
-            float rampV2face = _RampThreshold;
-            float3 rampColor2face = SAMPLE_TEXTURE2D(_RampTex2, sampler_LinearClamp, float2(rampUface, rampVface)).rgb;
-
-            float shadowface = 1 - smoothstep(
-    (1 - shadowMaskface) - _ShadowSmoothness, 
-    (1 - shadowMaskface) + _ShadowSmoothness, 
-    sdfFace
-);
-            shadowface = smoothstep(0.0, 1.0, shadowface);
             
-            rampColor2face = lerp(rampColor2face, float3(1,1,1), 0.7);
-            rampColor2face *= shadowface * 0.6;
+
+            float2 faceRampUV = float2(sdfFace * 0.3 + 0.5,0.5);
+
+            float3 faceRampColor = tex2D(_RampTex2,faceRampUV).rgb;
+            faceRampColor = saturate(faceRampColor);
+
+            float3 lutface = ApplySkinLUT(baseColor);
+            baseColor = lerp(baseColor, lutface, 0.5);
             
-            //rampColor2 = step(rampColor2,shadowMask);
+            // 采样脸部遮罩贴图
+            float maskValue = SAMPLE_TEXTURE2D(_ThicknessMap, sampler_ThicknessMap, input.uv).r; // 使用R通道作为遮罩值
+
+            float3 faceSSS = lerp(float3(1,1,1),_ThicknessColor.rgb,maskValue);
+
+            //鼻子高光
+            float noseHighlight = SAMPLE_TEXTURE2D(_ThicknessMap, sampler_ThicknessMap, input.uv).a;
+            noseHighlight *= sdfVlaueB;
+            // 分离左右高光（UV.x < 0.5为左，>0.5为右）
+               // 优化后代码（严格分割）
+                float leftMask = (input.uv.x > 0.5) ? noseHighlight : 0.0; // 仅右侧区域有效
+                float rightMask = (input.uv.x <= 0.5) ? noseHighlight : 0.0; // 仅左侧区域有效
+
+                // 计算视角与光源的夹角方向（正值为右，负值为左）
+                float3 viewLightDir = H;
+                float side = dot(normalize(sdfFace), viewLightDir);
+
+                 // 动态选择高光侧
+                float finalMask = (side > 0.0) ? leftMask : rightMask; // 完全二选一
+
+                float3 NoseHighlightColor = _NoseIntensity * _NoseColor * finalMask; // 仅在选定侧显示高光
+
+                 // 菲涅尔计算
+                //float3 normalWS = normalize(input.normalWS);
+                float3 viewDirWS = normalize(input.viewDirWS);
+                float fresnel = pow(1.0 - saturate(dot(pixelNormalWS, normalize(input.viewDirWS))), _FresnelPower);
+                fresnel = smoothstep(0.3,0.8,fresnel);
+                float3 edgeGlow = lightColor * _EdgeColor.rgb * fresnel * _FresnelScale * finalMask;
+                edgeGlow *= lerp(baseColor,float3(1,1,1),0.9);
+                edgeGlow *= NoL;
 
 
-            //half3 shadowColor = lerp(baseColor, baseColor * rampColor2, 1);
+            float _MaxOffset = 0.03; // 控制左右最大偏移范围
+            float Vx = V.x;
+            float clampedOffset = clamp(Vx, -_MaxOffset, _MaxOffset); // 双向钳制
+            float2 mouthUV = float2(input.uv.x + clampedOffset, input.uv.y); // 调整UV坐标范围
+            float mouth = tex2D(_MouthTex, mouthUV).r; // 采样嘴巴贴图
+            // 在切线空间中偏移UV（模拟高光移动）
 
-             finRampColorface = rampColorface + rampColor2face;
+                // 转换到切线空间
+            float3 lightDirTS = mul(TBN, lightDirWS);
+            float3 viewDirTS = mul(TBN, viewDirWS);
+            
+            // 计算半角向量（Blinn-Phong优化）
+            float3 halfDirTS = normalize(lightDirTS + viewDirTS);
+            
+            // 采样高光Mask（唇部区域）
+            //float specMask = tex2D(_SpecMask, input.uv).r;
+             float2 uvOffset = viewDirTS.xy * 0.1; // 调整0.1控制偏移量
+            float specMask = tex2D(_MouthTex, input.uv + uvOffset).r;
+            
+            // 计算高光强度（基于切线空间半角向量）
+            float specPower = pow(_Gloss, 2.0); // 转换为非线性范围
+            float NdotH = dot(sdfFace, halfDirTS);
+            float spec = pow(saturate(NdotH), specPower) * 2;
 
-             // BRDF计算 ------------------------------
-                // 法线分布
-                float D = D_GGX(NoH, Roughness);
-                // 几何遮蔽
-                float G = G_Smith(NoV, NoL, Roughness);
+            float finalSpec = spec * mouth; // 仅在嘴巴区域显示高光
                 
-                // 菲涅尔项
-                float3 F = F_Schlick(VoH, F0);
 
-
-                // 镜面反射项
-                //float3 specular = (D * G * F) / max(4.0 * NoV * finRampColor, EPSILON);
-
-                // 漫反射项
-                float3 kD = max((1.0 - F),0.1) * (1.0 - Metallic);
-                float3 diffusePBR = kD * baseColor / PI;
-
-                // 光照组合
-               // float3 radiance = mainLight.color * mainLight.distanceAttenuation;
-                //float3 directLight = (diffusePBR + specular) * radiance * finRampColor;
-
-                // 环境光照 ------------------------------
-                // 漫反射环境
-                float3 ambientDiffuse = SampleSH(N) * baseColor * kD;
                 
-                // 镜面反射环境
-                float3 R = reflect(-V, N);
-                float3 prefilteredColor = GlossyEnvironmentReflection(
-                    R,
-                    Roughness * Roughness,
-                    0.1
-                );
-                float3 ambientSpecular = prefilteredColor * F_SchlickRoughness(NoV, F0, Roughness);
                 
-                float3 ambientPBR = (ambientDiffuse + ambientSpecular) * 0.1;
+                
+                
+                float3 diffuseface1 = baseColor / PI;
 
-                 // 最终颜色
-                float3 finalColorPBR = directLight + ambientPBR;
+                // 合并光照
+                float3 radianceface = _MainLightColor.rgb * sdfFace;
+                float3 colorface = diffuseface1 * faceRampColor * radianceface * faceSSS;
+                float3 Lutcolorface = ApplySkinLUT(colorface);
+                colorface = lerp(colorface, Lutcolorface, 0.5);
+                
+                
+
+                
+
+                // 添加环境光照
+                float3 ambient = SampleSH(sdfFace) * baseColor.rgb;
 
 
-             diffuseface = (finRampColorface * kD * baseColor * mainLight.color + ambientPBR) / PI;
+            
+             
+        
+            // float shadowAttenuation = mainLight.shadowAttenuation * MainLightRealtimeShadow(input.shadowCoord);
+            // shadowAttenuation = saturate(0.5 + 0.5 * shadowAttenuation);
+
+            diffuseface = colorface +  ambient + NoseHighlightColor + finalSpec;
+
+            //diffuseface = finalSpec.xxx;
+
              //diffuse = (finRampColor * kD * baseColor * mainLight.color + ambientPBR) * ao / PI;
 
         }
@@ -819,106 +654,15 @@ Shader "Unlit/pbr"
              diffuseface = 0;
         }
 
-            //float sdfFace = step(sdfThreshold, sdfVlaue);
-             // 过渡区间宽度（可调参数）
-
-            
-
-            
-
-            // float2 sdfUV = float2(sign(dot(fixedLightDir, headRight)),1) * input.uv; 
-            // float sdfVlaue = SAMPLE_TEXTURE2D(_SDFTex, sampler_SDFTex, sdfUV).rgb;
-            // sdfVlaue += _FaceshadowOffset;
-            // float sdfThreshold = 1 - (dot(fixedLightDir, headForward) * 0.5 + 0.5);
-            // float sdfFace = step(sdfThreshold, sdfVlaue);
-
-            //float quantizedNdotL = floor(stepNoL * _RampThreshold * 4) / (_RampThreshold * 4);
-            //float stepquantizedNdotL = smoothstep(0.0, 0.9 , quantizedNdotL);
-            //float2 rampUV = float2(stepquantizedNdotL, 0.5);
-            //float3 rampColor = SAMPLE_TEXTURE2D(_RampTex, sampler_LinearClamp, rampUV).rgb;
-
-            //float3 directDiffuse = brdfData.diffuse * mainLight.color * finRampColor / PI;
-            //float3 directSpecular = DirectBRDF(brdfData, pixelNormalWS, -lightDirWS, input.viewDirWS) * mainLight.color * saturate(dot(pixelNormalWS, lightDirWS));
-
-            //float3 ambient = UNITY_LIGHTMODEL_AMBIENT.rgb * baseColor;
-            //float3 diffuse = directDiffuse + ambient;
-            //float3 specular = directSpecular;
-
-            // if (_GGXHair == 1)
-            // {
-            
-
-            // }
-
-
-
-            //float NoL = saturate(dot(pixelNormalWS, lightDirWS));
-            //float HalfLambert = saturate(0.5 + 0.5 * NoL);
-            //float3 diffuse = baseColor * HalfLambert * lightColor;
-
-
-            // // 在片元着色器中计算各向异性高光
-            // float HdotX = dot(H, input.tangentWS);
-            // float HdotY = dot(H, input.bitangentWS);
-            // float anisotropy = _Anisotropy;
-
-             float4 AnisoDirectionMap = tex2D(_AnisoDirectionMap, input.uv * _AnisoDirectionMap_ST);
-            // float3 noise = AnisoDirectionMap;
-
-            
-            // float D1 = AnisoGGXDistribution(NoH, HdotX, HdotY, Roughness, anisotropy);
-
-            // // 结合到BRDF中
-            // float3 specularGGX = D1 * F * G / (4.0 * NoL * NoV);
-
-            float aspect = sqrt(1.0 - 0.9 * abs(_Anisotropy));
-                float ax = max(0.001, Roughness * Roughness / aspect);
-                float ay = max(0.001, Roughness * Roughness * aspect);
-
-                 // 计算D项
-                float D1 = D_GGXAniso(ax, ay, NoH, H, T, B);
-                
-                // 计算G项
-                float G1 = V_SmithGGXCorrelatedAniso(ax, ay, ToV, BoV, ToL, BoL, NoV, NoL);
-
-                // 计算F项（Schlick近似）
-                float3 F0_GGX = lerp(0.08 * _Specular.xxx, baseColor.rgb, _SpecularTint);
-                float3 F_GGX = F0_GGX + (1.0 - F0_GGX) * pow(1.0 - saturate(dot(H, V)), 5.0);
-
-                // 组合BRDF
-                float3 specularGGX = (D1 * G1* F_GGX) * 0.25;
-
-                float MetallicGGX = SAMPLE_TEXTURE2D(_ILMTex, sampler_ILMTex, input.uv).x * _MetallicIntensityGGX;
-
-                specularGGX *= 1-MetallicGGX;
-
-                specularGGX *= _specularGGXintensity;
-                
-                specularGGX *= AnisoDirectionMap;
-
-
-                specularGGX = specularGGX * _SpecularTint * _SpecularTintIntensity;
-
-
-
-
-            //float3 diffuse = baseColor * NoL * lightColor;
-             baseAlpha = SAMPLE_TEXTURE2D(_BaseColorTex, sampler_LinearRepeat, input.uv).a;
-
-            float3 MetallicColor = Metallic * _MetallicColor;
-
-            float3 color = diffuse + diffuseface + EmissionColor + edgeGlow + specularmetllic + SpecularphongColor + specularGGX + (specular * mainLight.color);
-            
-            //color = saturate(color);
-            //color = min(color, 0.7);
 
             // 厚度贴图采样（反转处理：厚区域值更高）
                 half thickness = SAMPLE_TEXTURE2D(_ThicknessMap, sampler_ThicknessMap, input.uv).r;
                 thickness = pow(thickness * _DepthContrast, _ThicknessPower);
                 // 颜色混合：在厚区域叠加预设颜色
-                half3 finalColorsss = lerp(baseColor.rgb, _ThicknessColor.rgb, thickness);
+                //half3 finalColorsss = lerp(baseColor.rgb, _ThicknessColor.rgb, thickness);
 
-                color = lerp(color, finalColorsss, 0.5);
+                //color = lerp(color, finalColorsss, 0.5);
+                float3 color = diffuse + diffuseface;
 
                 color = saturate(color);
 
